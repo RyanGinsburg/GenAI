@@ -84,8 +84,38 @@ from the console worked fine, no code changes needed. If keys on this
 account start requiring that header again, see the ANTHROPIC_WORKSPACE_ID /
 default_headers approach discussed when this first came up.
 
+backend/services/research_agent.py — Step 4, the research agent — is built
+and tested but not yet committed (pending a friend's manual review, see
+below). research_club(website_url) fetches the club's page, follows one
+secondary link if its nav text/href matches events/join/recruit/apply/
+contact (max 2 pages), then calls claude-sonnet-5 with an explicit
+no-guessing prompt to extract application_deadline, next_meeting,
+info_session, coffee_chat_link — null for anything not concretely stated
+(a recurring "we meet weekly" without an actual date doesn't count).
+not_found: true when every field is null. Any failure (unreachable site,
+bad API response, truncated/invalid JSON) returns not_found with an
+"error" key instead of raising.
+
+Tested against 20 real club sites (qa/research_agent_review.py generates
+qa/research_agent_review.md — a checklist a friend is going through to
+verify field-by-field). 4/20 were genuine hits with real dates/times/
+locations pulled verbatim (Cornell Business Analytics Club, Cornell
+FinTech Club, AppDev at Cornell, Investment Banking Club — all
+application-cycle business/tech clubs); the other 16 correctly came back
+not_found (either nothing concrete stated, or in one case — Alpha Kappa
+Psi — a dead/unresolvable domain). Most club sites genuinely don't post
+this info, so a mostly-null result set across a broad sample is expected,
+not a sign of a bad extractor.
+
+Idea raised, not yet acted on: data/clubs.json has 1521 clubs but many
+are inactive/low-signal for this use case; a curated/filtered subset
+might improve match relevance and cut down wasted research_agent calls
+on dead or contentless sites. Decide later — don't filter clubs.json
+without an explicit go-ahead.
+
 Other service files under backend/services/ are still docstring-only stubs.
 frontend/ is a placeholder (Node not installed yet — `brew install node`
 before Step 6).
-Next: Step 4, the research agent (backend/services/research_agent.py) — go
-slow here per BUILD_PROMPTS.md, it's flagged as the hard part.
+Next: once research_agent.py's review file is confirmed, commit Step 4 and
+move to Step 5 (backend/main.py — wire matching.py, resume_parser.py, and
+research_agent.py into a FastAPI app).
