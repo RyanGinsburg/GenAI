@@ -24,9 +24,11 @@ pypdf
 # Embedding storage + cosine similarity
 numpy
 
+# Local embedding model for club matching (Step 2, matching.py)
+sentence-transformers
+
 # Not pinned yet — versions are still settling. Pin with `pip freeze` once the
 # pipeline works end to end.
 #
 # Added at the step that needs them, not guessed at now:
-#   - embedding model/client  -> Step 2 (matching.py)
 #   - Google Calendar client  -> Step 7 (calendar_sync.py)

@@ -18,6 +18,7 @@ dist/
 # Generated data. data/clubs.json IS committed so teammates don't re-scrape the
 # whole directory, but derived artifacts are not.
 data/embeddings.npy
+data/embeddings_meta.json
 data/cache/
 
 # macOS

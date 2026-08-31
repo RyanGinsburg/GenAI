@@ -45,14 +45,27 @@ club-agent/
   data before moving to the next stage.
 
 ## Current status
-Step 0 (skeleton) and Step 1 (scraper) done. scraper/scrape_campusgroups.py
-scrapes Cornell's CampusGroups directory by iterating its ~11 group_type
-buckets with view=all (the unfiltered listing silently truncates past ~1100
-rows, so per-bucket fetching is what's reliable — see the module docstring).
-data/clubs.json has all 1521 real clubs: name, category, description,
-website_url. 100% have website_url, ~90% (1366) have a description. The
-one-off "Cornell CG TEST" bucket is excluded on purpose.
-Service files under backend/services/ are still docstring-only stubs.
+Step 0 (skeleton), Step 1 (scraper), and Step 2 (embeddings + matching) done.
+scraper/scrape_campusgroups.py scrapes Cornell's CampusGroups directory by
+iterating its ~11 group_type buckets with view=all (the unfiltered listing
+silently truncates past ~1100 rows, so per-bucket fetching is what's
+reliable — see the module docstring). data/clubs.json has all 1521 real
+clubs: name, category, description, website_url. 100% have website_url,
+~90% (1366) have a description. The one-off "Cornell CG TEST" bucket is
+excluded on purpose.
+
+backend/services/matching.py embeds each club (name + description +
+category) with the local sentence-transformers model all-MiniLM-L6-v2 (no
+API key needed) and caches vectors to data/embeddings.npy, with a
+data/embeddings_meta.json sidecar (hash of source texts + model name) that
+auto-invalidates the cache if clubs.json or the model changes. Both files
+are gitignored/derived, regenerated on first run (~5s locally). match_clubs
+(query, top_k=10) returns clubs ranked by cosine similarity. Sanity-checked
+against "sustainability and climate policy clubs, low time commitment" —
+top result was GreenClub, all top 5 genuinely on-topic.
+Added sentence-transformers to requirements.txt.
+
+Other service files under backend/services/ are still docstring-only stubs.
 frontend/ is a placeholder (Node not installed yet — `brew install node`
 before Step 6).
-Next: Step 2, embeddings + matching (backend/services/matching.py).
+Next: Step 3, resume parsing (backend/services/resume_parser.py).
