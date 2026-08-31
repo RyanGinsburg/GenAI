@@ -1,114 +1,98 @@
-# GenAI
+# Cornell Club Matching Agent
 
-Repo: https://github.com/RyanGinsburg/GenAI
+## 👋 Directions for us (read this first)
 
-## Git Cheat Sheet
+We're taking turns, not working at the same time. Whoever's turn it is
+follows this loop:
 
-### Check what's going on
-
-```bash
-git status        # what's changed, staged, or untracked
-git log --oneline # recent commits
+**Before you start working:**
 ```
-
-Run `git status` whenever you're unsure. It's read-only and always safe.
-
-### Push your code (send changes to GitHub)
-
-```bash
-git add .                      # stage all changes
-git commit -m "what I changed" # save them as a commit
-git push                       # upload to GitHub
-```
-
-To stage just one file instead of everything: `git add path/to/file`
-
-### Pull code (get changes from GitHub)
-
-```bash
 git pull
 ```
+Always do this first so you have the other person's latest changes.
 
-Do this **before** you start working, so you're building on the latest version.
+**While you work:**
+Open Claude Code in this folder. It reads `CLAUDE.md` automatically for
+project context. Follow the prompts in `BUILD_PROMPTS.md`, in order —
+don't skip ahead to a step that depends on one that isn't done yet.
 
-### Typical session
-
-```bash
-git pull                    # 1. get up to date
-# ...edit files...
-git add .                   # 2. stage
-git commit -m "add feature" # 3. commit
-git push                    # 4. upload
+**When you're done for the session:**
 ```
-
-## Gotchas
-
-**"nothing to commit"** — Git sees no changed files. Make sure you actually saved
-your file (⌘S) and that it lives inside this folder.
-
-**Pull refuses to run** because you have uncommitted changes — either commit them
-first, or stash them temporarily:
-
-```bash
-git stash    # set changes aside
-git pull
-git stash pop # bring them back
-```
-
-**Push is rejected** because the remote has commits you don't have. Pull, then push:
-
-```bash
-git pull
+git add .
+git commit -m "short description of what you did"
 git push
 ```
+Before committing, update the **"Current status"** line at the bottom of
+`CLAUDE.md` so the other person knows exactly what's done. Then text/message
+the other person: "pushed, your turn — [next step]."
 
-**First push on a new branch** needs to set the upstream once:
+**Whose turn is it right now:**
+_(update this line each handoff)_
+> Currently: **[name]** is working on **[step]**.
 
-```bash
-git push -u origin main
+**Rules:**
+- Only one of us commits to `main` at a time — that's the whole point of
+  taking turns, it avoids merge conflicts.
+- Never commit `.env` (it has API keys). It should already be in
+  `.gitignore` — double check if unsure.
+- If `git pull` or `git push` gives an error neither of us understands,
+  stop and ask Claude before running more commands.
+
+---
+
+## What this project is
+
+A chatbot that helps Cornell students find student organizations. The
+student chats and/or uploads their resume. The system matches them to
+relevant clubs from Cornell's real CampusGroups directory, researches each
+matched club's website for deadlines/meetings/coffee chats, shows the
+student what it found, and — only after the student approves — adds the
+relevant events to their Google Calendar.
+
+Built for the Generative AI @ Cornell developer application.
+
+## Tech stack
+
+- **Backend:** Python, FastAPI
+- **LLM:** Anthropic Claude API
+- **Embeddings:** lightweight model, cached locally (no hosted vector DB)
+- **Frontend:** React
+- **Calendar:** Google Calendar API (OAuth2)
+- **Data:** scraped JSON files in `/data`
+
+## Project structure
+
 ```
-
-After that, plain `git push` works.
+club-agent/
+  scraper/              # scrapes CampusGroups directory -> data/clubs.json
+  data/                 # clubs.json, embeddings.npy, cache files
+  backend/
+    routes/             # FastAPI route handlers
+    services/
+      matching.py        # embedding search + re-ranking
+      resume_parser.py    # PDF -> structured profile
+      research_agent.py   # fetch club site -> extract structured info
+      calendar_sync.py    # Google Calendar OAuth + event creation
+  frontend/              # React app
+  .env.example
+  CLAUDE.md              # project context for Claude Code
+  BUILD_PROMPTS.md       # ordered prompts to build each piece
+  README.md              # this file
+```
 
 ## Setup
 
-This project needs its own Python environment, kept separate from your system
-Python, so its dependencies don't collide with anything else on your machine.
+1. Clone the repo, `cd` into it.
+2. Copy `.env.example` to `.env` and fill in your own API keys (never commit
+   this file).
+3. Backend: create a virtual environment and `pip install -r requirements.txt`.
+4. Frontend: `cd frontend && npm install`.
+5. See `BUILD_PROMPTS.md` for the build sequence if setting up from scratch.
 
-### First time
+## Key files for working with Claude Code
 
-```bash
-python3 -m venv .venv                        # create the virtual environment
-.venv/bin/pip install -r requirements.txt    # install dependencies into it
-cp .env.example .env                         # your local copy of secrets
-```
-
-Then open `.env` and fill in:
-- `ANTHROPIC_API_KEY` — from https://console.anthropic.com/settings/keys
-- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from Google Cloud Console
-  (only needed once calendar sync is being built)
-
-`.env` is gitignored — it never gets committed, and nothing in this repo should
-ever hardcode a real key.
-
-### Every time you come back to work on this
-
-```bash
-source .venv/bin/activate
-```
-
-(Or skip activating and just call `.venv/bin/python` / `.venv/bin/pip` directly,
-like the commands above.)
-
-### Project layout
-
-See [CLAUDE.md](CLAUDE.md) for the full project description, tech stack, and
-current build status. Short version:
-
-```
-scraper/    scrapes Cornell's club directory -> data/clubs.json
-data/       clubs.json, cached embeddings, scrape cache
-backend/    FastAPI app: routes/ + services/ (matching, resume parsing,
-            club research, calendar sync)
-frontend/   React app (not scaffolded yet — needs Node: brew install node)
-```
+- **`CLAUDE.md`** — project context, tech stack decisions, and hard
+  constraints. Claude Code reads this automatically at the start of every
+  session. Keep the "Current status" section updated.
+- **`BUILD_PROMPTS.md`** — the exact prompts to paste into Claude Code, in
+  build order, from initial skeleton through calendar integration.
