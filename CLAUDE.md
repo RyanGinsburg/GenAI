@@ -45,6 +45,20 @@ club-agent/
   data before moving to the next stage.
 
 ## Current status
+
+**Immediate next step (do this first if asked "what needs to be done"):**
+Step 4 (backend/services/research_agent.py) is code-complete and committed,
+but not yet marked done — it's waiting on a manual review. Open
+qa/research_agent_review.md, and for each of the 20 real club websites
+listed: open the site's own website_url yourself, check whether the
+extracted fields (application_deadline, next_meeting, info_session,
+coffee_chat_link) are actually correct and that nothing true on the site
+was missed, then fill in that club's "Verified?" checkbox row. Report back
+what you find (especially anything wrong or missed) so it can get fixed.
+Once that review is done, Step 4 gets marked done here and Step 5 (backend/
+main.py — a FastAPI app wiring matching.py, resume_parser.py, and
+research_agent.py together) starts.
+
 Step 0 (skeleton), Step 1 (scraper), and Step 2 (embeddings + matching) done.
 scraper/scrape_campusgroups.py scrapes Cornell's CampusGroups directory by
 iterating its ~11 group_type buckets with view=all (the unfiltered listing
@@ -84,9 +98,9 @@ from the console worked fine, no code changes needed. If keys on this
 account start requiring that header again, see the ANTHROPIC_WORKSPACE_ID /
 default_headers approach discussed when this first came up.
 
-backend/services/research_agent.py — Step 4, the research agent — is built
-and tested but not yet committed (pending a friend's manual review, see
-below). research_club(website_url) fetches the club's page, follows one
+backend/services/research_agent.py — Step 4, the research agent — is built,
+tested, and committed, but not yet marked done (see "Immediate next step"
+above — pending a manual review). research_club(website_url) fetches the club's page, follows one
 secondary link if its nav text/href matches events/join/recruit/apply/
 contact (max 2 pages), then calls claude-sonnet-5 with an explicit
 no-guessing prompt to extract application_deadline, next_meeting,
@@ -116,6 +130,3 @@ without an explicit go-ahead.
 Other service files under backend/services/ are still docstring-only stubs.
 frontend/ is a placeholder (Node not installed yet — `brew install node`
 before Step 6).
-Next: once research_agent.py's review file is confirmed, commit Step 4 and
-move to Step 5 (backend/main.py — wire matching.py, resume_parser.py, and
-research_agent.py into a FastAPI app).
