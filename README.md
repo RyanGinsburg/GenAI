@@ -2,41 +2,74 @@
 
 ## 👋 Directions for us (read this first)
 
-We're taking turns, not working at the same time. Whoever's turn it is
-follows this loop:
+### Quick glossary (skip if you already know this)
+- **This repo** = this folder. It's the shared project folder for the app.
+- **`.md` files** (like this one, `CLAUDE.md`, `BUILD_PROMPTS.md`) = plain
+  text files with some formatting. You don't need any special program —
+  open them in any text editor, or view them on GitHub where they look
+  nicely formatted automatically.
+- **Claude Code** = a terminal app where you type instructions in plain
+  English and it writes/edits code for you in this folder. You "open" it by
+  typing `claude` in your terminal while inside this repo's folder.
+- **`git pull` / `git push`** = downloading and uploading the latest version
+  of the project so you and your teammate stay in sync. See the loop below.
 
-**Before you start working:**
-```
-git pull
-```
-Always do this first so you have the other person's latest changes.
+### The workflow: we take turns, one person "has the ball" at a time
 
-**While you work:**
-Open Claude Code in this folder. It reads `CLAUDE.md` automatically for
-project context. Follow the prompts in `BUILD_PROMPTS.md`, in order —
-don't skip ahead to a step that depends on one that isn't done yet.
+**Step-by-step, every time it's your turn:**
 
-**When you're done for the session:**
-```
-git add .
-git commit -m "short description of what you did"
-git push
-```
-Before committing, update the **"Current status"** line at the bottom of
-`CLAUDE.md` so the other person knows exactly what's done. Then text/message
-the other person: "pushed, your turn — [next step]."
+1. Open a terminal, navigate into the project folder, then run:
+   ```
+   git pull
+   ```
+   This downloads your teammate's latest work. Always do this first.
 
-**Whose turn is it right now:**
-_(update this line each handoff)_
-> Currently: **[name]** is working on **[step]**.
+2. Start Claude Code by typing:
+   ```
+   claude
+   ```
+   It will automatically read `CLAUDE.md` in this folder for project context —
+   you don't need to explain the project to it yourself.
 
-**Rules:**
-- Only one of us commits to `main` at a time — that's the whole point of
-  taking turns, it avoids merge conflicts.
-- Never commit `.env` (it has API keys). It should already be in
-  `.gitignore` — double check if unsure.
-- If `git pull` or `git push` gives an error neither of us understands,
-  stop and ask Claude before running more commands.
+3. Open `BUILD_PROMPTS.md` in this repo (in any text editor, or on GitHub).
+   Find the step you're supposed to do (see "whose turn" below), and
+   **copy-paste that exact prompt** into Claude Code. Hit enter and let it work.
+
+4. Look at what it did. If something looks broken or you're not sure, come
+   back to this Claude conversation (the one that gave you these files) and
+   describe what happened — don't just keep guessing prompts at Claude Code.
+
+5. When the step is working, tell it done for now, then in your terminal run:
+   ```
+   git add .
+   git commit -m "short description of what you did"
+   git push
+   ```
+   Replace the text in quotes with a real description, e.g.
+   `"finished scraper, clubs.json has real data"`.
+
+6. Open `CLAUDE.md`, find the **"Current status"** line near the bottom, and
+   update it to reflect what's now done. Save, then run the `git add` /
+   `commit` / `push` commands above again so that update gets shared too.
+
+7. Text/message your teammate: **"pushed, your turn — do Step [X]."**
+
+8. Your teammate now does steps 1-7 themselves, starting with `git pull`.
+
+### Whose turn is it right now
+_(update this line every handoff so it's never ambiguous)_
+> Currently: **[name]** is working on **Step [X]: [step name]**.
+
+### Rules
+- **Only one of us works in the repo at a time.** If it's not your turn,
+  don't run Claude Code prompts yet — wait for the "pushed, your turn" message.
+- **Never commit `.env`** (it holds API keys). It should already be listed in
+  a file called `.gitignore` so git skips it automatically — don't remove it
+  from there.
+- **Never paste your real API key into a message to Claude Code or into
+  chat** — it goes in the `.env` file only.
+- If `git pull` or `git push` gives an error you don't understand, **stop**
+  and bring it back to this conversation before running more commands.
 
 ---
 
