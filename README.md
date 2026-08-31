@@ -69,3 +69,46 @@ git push -u origin main
 ```
 
 After that, plain `git push` works.
+
+## Setup
+
+This project needs its own Python environment, kept separate from your system
+Python, so its dependencies don't collide with anything else on your machine.
+
+### First time
+
+```bash
+python3 -m venv .venv                        # create the virtual environment
+.venv/bin/pip install -r requirements.txt    # install dependencies into it
+cp .env.example .env                         # your local copy of secrets
+```
+
+Then open `.env` and fill in:
+- `ANTHROPIC_API_KEY` — from https://console.anthropic.com/settings/keys
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — from Google Cloud Console
+  (only needed once calendar sync is being built)
+
+`.env` is gitignored — it never gets committed, and nothing in this repo should
+ever hardcode a real key.
+
+### Every time you come back to work on this
+
+```bash
+source .venv/bin/activate
+```
+
+(Or skip activating and just call `.venv/bin/python` / `.venv/bin/pip` directly,
+like the commands above.)
+
+### Project layout
+
+See [CLAUDE.md](CLAUDE.md) for the full project description, tech stack, and
+current build status. Short version:
+
+```
+scraper/    scrapes Cornell's club directory -> data/clubs.json
+data/       clubs.json, cached embeddings, scrape cache
+backend/    FastAPI app: routes/ + services/ (matching, resume parsing,
+            club research, calendar sync)
+frontend/   React app (not scaffolded yet — needs Node: brew install node)
+```

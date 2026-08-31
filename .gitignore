@@ -1,0 +1,24 @@
+# Secrets — never commit. Only .env.example belongs in git.
+.env
+.env.local
+token.json
+credentials.json
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Node (frontend/, once it's scaffolded)
+node_modules/
+dist/
+
+# Generated data. data/clubs.json IS committed so teammates don't re-scrape the
+# whole directory, but derived artifacts are not.
+data/embeddings.npy
+data/cache/
+
+# macOS
+.DS_Store
