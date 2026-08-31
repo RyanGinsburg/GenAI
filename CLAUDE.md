@@ -45,9 +45,14 @@ club-agent/
   data before moving to the next stage.
 
 ## Current status
-Skeleton only (BUILD_PROMPTS.md Step 0): folder structure, .venv (Python 3.14),
-requirements.txt, .gitignore, and .env.example are in place and verified
-(all 8 deps import cleanly, FastAPI boots). Service files under
-backend/services/ are docstring-only stubs — no feature code yet. frontend/
-is a placeholder (Node not installed yet — `brew install node` before Step 6).
-Next: Step 1, the scraper (scraper/scrape_campusgroups.py).
+Step 0 (skeleton) and Step 1 (scraper) done. scraper/scrape_campusgroups.py
+scrapes Cornell's CampusGroups directory by iterating its ~11 group_type
+buckets with view=all (the unfiltered listing silently truncates past ~1100
+rows, so per-bucket fetching is what's reliable — see the module docstring).
+data/clubs.json has all 1521 real clubs: name, category, description,
+website_url. 100% have website_url, ~90% (1366) have a description. The
+one-off "Cornell CG TEST" bucket is excluded on purpose.
+Service files under backend/services/ are still docstring-only stubs.
+frontend/ is a placeholder (Node not installed yet — `brew install node`
+before Step 6).
+Next: Step 2, embeddings + matching (backend/services/matching.py).
