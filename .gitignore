@@ -21,5 +21,9 @@ data/embeddings.npy
 data/embeddings_meta.json
 data/cache/
 
+# Uploaded resumes are personal data — never commit them.
+data/resumes/*
+!data/resumes/.gitkeep
+
 # macOS
 .DS_Store

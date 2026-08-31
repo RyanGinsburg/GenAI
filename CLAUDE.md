@@ -65,7 +65,27 @@ against "sustainability and climate policy clubs, low time commitment" —
 top result was GreenClub, all top 5 genuinely on-topic.
 Added sentence-transformers to requirements.txt.
 
+backend/services/resume_parser.py extracts text from a resume PDF with
+pypdf, then calls claude-sonnet-5 (per CLAUDE.md's "claude-sonnet for
+extraction/reasoning tasks") to return strict JSON: major, graduation_year,
+skills, interests, clubs_mentioned — all literal extractions, null/empty if
+not stated, no fabrication — plus suggested_club_interests, a deliberately
+separate field where the model reasons over the whole resume (major, skills,
+experience) to suggest club/professional interest areas (e.g. "artificial
+intelligence", "quantitative finance"), grounded in the resume's actual
+content. Any failure (missing file, no extractable text/scanned PDF, bad API
+response, truncated/invalid JSON) returns {"error": "..."} instead of
+raising. Uploaded resumes go in data/resumes/ (gitignored — personal data).
+Sanity-checked against a real resume; output looked accurate.
+
+Note: this Anthropic account issues identity-linked API keys that require
+an anthropic-workspace-id header per request — a plain workspace-scoped key
+from the console worked fine, no code changes needed. If keys on this
+account start requiring that header again, see the ANTHROPIC_WORKSPACE_ID /
+default_headers approach discussed when this first came up.
+
 Other service files under backend/services/ are still docstring-only stubs.
 frontend/ is a placeholder (Node not installed yet — `brew install node`
 before Step 6).
-Next: Step 3, resume parsing (backend/services/resume_parser.py).
+Next: Step 4, the research agent (backend/services/research_agent.py) — go
+slow here per BUILD_PROMPTS.md, it's flagged as the hard part.
