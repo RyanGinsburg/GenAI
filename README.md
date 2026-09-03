@@ -58,14 +58,13 @@
 
 ### Whose turn is it right now
 _(update this line every handoff so it's never ambiguous)_
-> Currently: the two bugs found in the 2026-09-03 QA review of
-> research_agent.py are fixed in code, but not yet re-verified against the
-> live Claude API — see CLAUDE.md's "Current status" section and
-> `qa/research_agent_review.md` for details.
-> **Next step:** run `qa/research_agent_review.py` again (needs
-> ANTHROPIC_API_KEY in `.env`) and confirm Cornell Wall Street Club now
-> returns real data and the previously-missed coffee chat links show up.
-> Once confirmed, Step 5 (`backend/main.py`) starts.
+> Currently: Step 4 (research_agent.py) is done — the two bugs found in the
+> 2026-09-03 QA review are fixed and confirmed against the live Claude API.
+> See CLAUDE.md's "Current status" section and `qa/research_agent_review.md`
+> for details.
+> **Next step:** Step 5 — build `backend/main.py`, a FastAPI app wiring
+> together matching.py, resume_parser.py, and research_agent.py (see
+> BUILD_PROMPTS.md's Step 5 prompt).
 
 ### Rules
 - **Only one of us works in the repo at a time.** If it's not your turn,

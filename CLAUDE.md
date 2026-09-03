@@ -46,48 +46,54 @@ club-agent/
 
 ## Current status
 
-**Immediate next step (do this first if asked "what needs to be done"):**
-The manual review of research_agent.py (qa/research_agent_review.md) found
-two real bugs on 2026-09-03; both are now fixed in code, but NOT yet
-re-verified against the live Claude API, so Step 4 is still not marked
-done. Before starting Step 5, run `qa/research_agent_review.py` again
-(needs a working `.env` with ANTHROPIC_API_KEY) and confirm Cornell Wall
-Street Club now returns real data and the previously-missed coffee chat
-links now show up.
+**Step 4 (backend/services/research_agent.py) is done.** The manual review
+(qa/research_agent_review.md) found two real bugs on 2026-09-03; both were
+fixed in code and then confirmed against the live Claude API the same day
+(after swapping in a workspace-scoped API key — this account's
+identity-linked keys 400 with "anthropic-workspace-id is required"; see the
+note further down). Cornell Wall Street Club now correctly returns its real
+deadline/info-session/coffee-chat data instead of not_found, and all 7
+previously-missing coffee chat links across the sample now come back
+populated with the right URLs.
 
-1. **Coffee chat links were missed systematically** (6 of 7 real ones
+**Immediate next step: Step 5 — build backend/main.py**, a FastAPI app
+wiring together matching.py, resume_parser.py, and research_agent.py (see
+BUILD_PROMPTS.md's Step 5 prompt for the exact routes/shape:
+POST /chat and POST /research, no auth/database, simple per-club error
+handling).
+
+What the two bugs were and how they were fixed:
+
+1. **Coffee chat links were missed systematically** (all 7 real ones
    missed: Cornell Business Analytics Club, Cornell XR, 180 Degrees
-   Consulting, Cornell FinTech Club, AppDev at Cornell, Investment Banking
-   Club). Root cause: `_page_text()` in research_agent.py used
-   `soup.get_text()`, which strips all `<a href>` URLs and keeps only the
-   visible link text (e.g. "Sign Up Now"), so Claude was never actually
-   given the URL even when a coffee chat link was right there on the page.
-   Fixed: `_page_text()` now appends each link's absolute URL in
-   parentheses after its anchor text, and the prompt tells the model to use
-   it. Confirmed (by re-processing the saved HTML directly, without an API
-   call) that the target URLs now appear in the extracted text for Cornell
-   Wall Street Club, AppDev, and Cornell Business Analytics.
+   Consulting, Cornell FinTech Club, AppDev at Cornell, Cornell Wall Street
+   Club, Investment Banking Club). Root cause: `_page_text()` in
+   research_agent.py used `soup.get_text()`, which strips all `<a href>`
+   URLs and keeps only the visible link text (e.g. "Sign Up Now"), so
+   Claude was never actually given the URL even when a coffee chat link was
+   right there on the page. Fixed: `_page_text()` now appends each link's
+   absolute URL in parentheses after its anchor text, and the prompt tells
+   the model to use it. Confirmed against the live API on 2026-09-03 - all
+   7 links now come back populated with the correct URL.
 2. **Cornell Wall Street Club (cornell-wsc.com/recruitment.html) came back
    entirely not_found when it should have been a real hit.** Turned out NOT
    to be JS rendering as originally suspected — the raw static HTML already
    has the real timeline/deadline/coffee-chat link well within the char
    limit. The actual cause: a stale "details will be announced soon" hero
    banner sits above the real, filled-in timeline on the same page, and the
-   model appears to have let that vague banner suppress the concrete dates
-   below it. Fixed by adding an explicit rule to SYSTEM_PROMPT that a vague
+   model was letting that vague banner suppress the concrete dates below
+   it. Fixed by adding an explicit rule to SYSTEM_PROMPT that a vague
    placeholder elsewhere on the page must not override concrete data that's
-   also present.
+   also present. Confirmed against the live API on 2026-09-03 - the club
+   now correctly comes back with its real deadline, info session, and
+   coffee chat link.
 
 Also fixed: for Blockchain at Cornell, `_find_secondary_url` had followed
 an off-domain LinkedIn profile URL instead of a real club page; it's now
-restricted to same-domain links only.
+restricted to same-domain links only (confirmed live: it no longer follows
+that link).
 
-Full detail (including the corrected root-cause writeup for Cornell Wall
-Street Club) is in qa/research_agent_review.md. Once a live-API re-run
-confirms the fixes actually change the model's output for these clubs,
-Step 4 gets marked done here and Step 5 (backend/main.py — a FastAPI app
-wiring matching.py, resume_parser.py, and research_agent.py together)
-starts.
+Full detail is in qa/research_agent_review.md.
 
 Step 0 (skeleton), Step 1 (scraper), and Step 2 (embeddings + matching) done.
 scraper/scrape_campusgroups.py scrapes Cornell's CampusGroups directory by
@@ -123,33 +129,40 @@ raising. Uploaded resumes go in data/resumes/ (gitignored — personal data).
 Sanity-checked against a real resume; output looked accurate.
 
 Note: this Anthropic account issues identity-linked API keys that require
-an anthropic-workspace-id header per request — a plain workspace-scoped key
-from the console worked fine, no code changes needed. If keys on this
-account start requiring that header again, see the ANTHROPIC_WORKSPACE_ID /
-default_headers approach discussed when this first came up.
+an anthropic-workspace-id header per request, which a plain
+Anthropic(...) client call rejects with a 400 ("anthropic-workspace-id is
+required..."). This has come up twice now (Step 3, and again when
+re-verifying Step 4 on 2026-09-03) and both times the fix was the same:
+generate a plain workspace-scoped key from console.anthropic.com/settings/keys
+(with a specific workspace selected, not "All workspaces"/personal
+identity) and put that in .env instead — no code changes needed. If this
+keeps recurring, it may be worth just adding ANTHROPIC_WORKSPACE_ID /
+default_headers support in code instead of re-generating keys each time.
 
-backend/services/research_agent.py — Step 4, the research agent — is built,
-tested, and committed, but not yet marked done (see "Immediate next step"
-above — pending a manual review). research_club(website_url) fetches the club's page, follows one
-secondary link if its nav text/href matches events/join/recruit/apply/
+backend/services/research_agent.py — Step 4, the research agent — is done.
+research_club(website_url) fetches the club's page, follows one
+secondary same-domain link if its nav text/href matches events/join/recruit/apply/
 contact (max 2 pages), then calls claude-sonnet-5 with an explicit
 no-guessing prompt to extract application_deadline, next_meeting,
 info_session, coffee_chat_link — null for anything not concretely stated
-(a recurring "we meet weekly" without an actual date doesn't count).
-not_found: true when every field is null. Any failure (unreachable site,
-bad API response, truncated/invalid JSON) returns not_found with an
-"error" key instead of raising.
+(a recurring "we meet weekly" without an actual date doesn't count). Page
+text preserves link URLs next to their anchor text (see the bug writeup
+above) so link-based fields like coffee_chat_link are actually visible to
+the model. not_found: true when every field is null. Any failure
+(unreachable site, bad API response, truncated/invalid JSON) returns
+not_found with an "error" key instead of raising.
 
 Tested against 20 real club sites (qa/research_agent_review.py generates
-qa/research_agent_review.md — a checklist a friend is going through to
-verify field-by-field). 4/20 were genuine hits with real dates/times/
-locations pulled verbatim (Cornell Business Analytics Club, Cornell
-FinTech Club, AppDev at Cornell, Investment Banking Club — all
-application-cycle business/tech clubs); the other 16 correctly came back
-not_found (either nothing concrete stated, or in one case — Alpha Kappa
-Psi — a dead/unresolvable domain). Most club sites genuinely don't post
-this info, so a mostly-null result set across a broad sample is expected,
-not a sign of a bad extractor.
+qa/research_agent_review.md, and a friend went through it verifying
+field-by-field, which is what surfaced the two bugs fixed above). After the
+fixes, 7/20 are genuine hits with real dates/times/locations and coffee
+chat links pulled verbatim (Cornell Business Analytics Club, Cornell XR,
+180 Degrees Consulting, Cornell FinTech Club, AppDev at Cornell, Cornell
+Wall Street Club, Investment Banking Club); the other 13 correctly come
+back not_found (either nothing concrete stated, or in two cases — Alpha
+Kappa Psi, Black Ivy Pre-Law Society — a dead/unresolvable domain). Most
+club sites genuinely don't post this info, so a mostly-null result set
+across a broad sample is expected, not a sign of a bad extractor.
 
 Idea raised, not yet acted on: data/clubs.json has 1521 clubs but many
 are inactive/low-signal for this use case; a curated/filtered subset
