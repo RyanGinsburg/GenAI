@@ -47,14 +47,15 @@ club-agent/
 ## Current status
 
 **Step 4 (backend/services/research_agent.py) is done.** The manual review
-(qa/research_agent_review.md) found two real bugs on 2026-09-03; both were
-fixed in code and then confirmed against the live Claude API the same day
+(qa/research_agent_review.md) found three real bugs on 2026-09-03, all
+fixed in code and confirmed against the live Claude API the same day
 (after swapping in a workspace-scoped API key — this account's
 identity-linked keys 400 with "anthropic-workspace-id is required"; see the
-note further down). Cornell Wall Street Club now correctly returns its real
-deadline/info-session/coffee-chat data instead of not_found, and all 7
-previously-missing coffee chat links across the sample now come back
-populated with the right URLs.
+note further down). The sample went from 7/20 real hits to 11/20: Cornell
+Wall Street Club, Cornell Real Estate Club, Cornell Consulting Club,
+Cornell Algo Trading Club, and Quant Fund at Cornell all flipped from
+not_found to real data, and all 7 previously-missing coffee chat links
+across the sample now come back populated with the right URLs.
 
 **Immediate next step: Step 5 — build backend/main.py**, a FastAPI app
 wiring together matching.py, resume_parser.py, and research_agent.py (see
@@ -88,10 +89,30 @@ What the two bugs were and how they were fixed:
    now correctly comes back with its real deadline, info session, and
    coffee chat link.
 
+3. **Applications reachable via a real on-site "Apply" page were being
+   missed because `_find_secondary_url` followed the wrong link.** It
+   returned the *first* nav link matching any keyword in document order,
+   not the *best* one — so a page with both a generic "Contact"/"Events"
+   link and the club's actual "Apply" page would often follow whichever
+   appeared first in the HTML, missing the real recruiting page entirely.
+   Confirmed on Cornell Real Estate Club, Cornell Consulting Club, Cornell
+   Algo Trading Club, and Quant Fund at Cornell — all four have a real
+   deadline/timeline/coffee-chat-link on an `/apply`-style page that was
+   never fetched. Fixed by reordering `SECONDARY_LINK_KEYWORDS` by priority
+   (apply/recruit/join before events/contact) and having
+   `_find_secondary_url` scan every matching link and pick the
+   highest-priority one instead of stopping at the first match. Confirmed
+   against the live API on 2026-09-03 - all 4 clubs now return real data.
+
 Also fixed: for Blockchain at Cornell, `_find_secondary_url` had followed
 an off-domain LinkedIn profile URL instead of a real club page; it's now
 restricted to same-domain links only (confirmed live: it no longer follows
-that link).
+that link). Blockchain at Cornell still comes back not_found even after
+fix #3, though — its "Apply Now" button turned out not to be a real
+`<a href>` at all (a client-side Framer component with a JS click handler,
+no static destination), which would need actual browser/JS rendering to
+resolve. Out of scope for the current requests/BeautifulSoup approach;
+noted as a known limitation rather than fixed.
 
 Full detail is in qa/research_agent_review.md.
 
@@ -141,28 +162,35 @@ default_headers support in code instead of re-generating keys each time.
 
 backend/services/research_agent.py — Step 4, the research agent — is done.
 research_club(website_url) fetches the club's page, follows one
-secondary same-domain link if its nav text/href matches events/join/recruit/apply/
-contact (max 2 pages), then calls claude-sonnet-5 with an explicit
-no-guessing prompt to extract application_deadline, next_meeting,
-info_session, coffee_chat_link — null for anything not concretely stated
-(a recurring "we meet weekly" without an actual date doesn't count). Page
-text preserves link URLs next to their anchor text (see the bug writeup
-above) so link-based fields like coffee_chat_link are actually visible to
-the model. not_found: true when every field is null. Any failure
-(unreachable site, bad API response, truncated/invalid JSON) returns
-not_found with an "error" key instead of raising.
+same-domain secondary link — prioritized apply/recruit/join over
+events/contact, picking the best keyword match anywhere on the page rather
+than the first one encountered (max 2 pages) — then calls claude-sonnet-5
+with an explicit no-guessing prompt to extract application_deadline,
+next_meeting, info_session, coffee_chat_link — null for anything not
+concretely stated (a recurring "we meet weekly" without an actual date
+doesn't count). Page text preserves link URLs next to their anchor text
+(see the bug writeup above) so link-based fields like coffee_chat_link are
+actually visible to the model. not_found: true when every field is null.
+Any failure (unreachable site, bad API response, truncated/invalid JSON)
+returns not_found with an "error" key instead of raising.
 
 Tested against 20 real club sites (qa/research_agent_review.py generates
 qa/research_agent_review.md, and a friend went through it verifying
-field-by-field, which is what surfaced the two bugs fixed above). After the
-fixes, 7/20 are genuine hits with real dates/times/locations and coffee
-chat links pulled verbatim (Cornell Business Analytics Club, Cornell XR,
-180 Degrees Consulting, Cornell FinTech Club, AppDev at Cornell, Cornell
-Wall Street Club, Investment Banking Club); the other 13 correctly come
-back not_found (either nothing concrete stated, or in two cases — Alpha
-Kappa Psi, Black Ivy Pre-Law Society — a dead/unresolvable domain). Most
-club sites genuinely don't post this info, so a mostly-null result set
-across a broad sample is expected, not a sign of a bad extractor.
+field-by-field, which is what surfaced the three bugs fixed above). After
+the fixes, 11/20 are genuine hits with real dates/times/locations and
+coffee chat links pulled verbatim (Cornell Business Analytics Club,
+Cornell Real Estate Club, Cornell XR, 180 Degrees Consulting, Cornell
+Consulting Club, Cornell FinTech Club, AppDev at Cornell, Cornell Wall
+Street Club, Investment Banking Club, Cornell Algo Trading Club, Quant
+Fund at Cornell); the other 9 correctly come back not_found — two have a
+dead/unresolvable domain (Alpha Kappa Psi, Black Ivy Pre-Law Society), one
+(Blockchain at Cornell) has an apply button with no static href (see the
+bug-3 writeup above), and the remaining 6 genuinely have no concrete
+recruiting info anywhere on their site. This 11/20 hit rate skews heavily
+toward business/finance/tech recruiting clubs that run formal application
+cycles with published timelines — most other clubs (a cappella, outing
+club, policy blogs, etc.) just don't operate that way, so this is the
+correct output of a working extractor, not under-extraction.
 
 Idea raised, not yet acted on: data/clubs.json has 1521 clubs but many
 are inactive/low-signal for this use case; a curated/filtered subset
