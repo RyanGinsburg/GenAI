@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import anthropic
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -58,6 +58,15 @@ Rules:
 - Recurring/vague statements ("we meet weekly") without an actual date or day are not
   a "next_meeting" - only extract it if a specific date, day-of-week + time, or
   similar concrete detail is given.
+- Some pages contain a generic placeholder elsewhere on the page - e.g. a hero banner
+  saying "details will be announced soon" or "TBD" - even when a specific, concrete
+  date/time/link is also given further down (e.g. in a detailed timeline or list). If
+  a concrete detail is stated anywhere on the page, extract it - a vague placeholder
+  elsewhere on the same page does NOT override or suppress a specific date, time, or
+  link that is actually present. Only use null when no concrete detail is given at all.
+- Link destinations appear in parentheses right after their link text, e.g.
+  'Sign Up Now (https://forms.gle/abc123)' - use that URL for coffee_chat_link when
+  the surrounding link text/context indicates it's for booking a coffee chat.
 - If a field isn't present in the text, use null for it. It is normal and expected
   for most or all fields to be null - most club websites don't list this information.
 - Output must be valid JSON and nothing else.
@@ -90,17 +99,37 @@ def _fetch(url: str) -> BeautifulSoup | None:
     return BeautifulSoup(resp.text, "html.parser")
 
 
-def _page_text(soup: BeautifulSoup) -> str:
-    """Visible text of a page, scripts/styles stripped, whitespace collapsed."""
+def _page_text(soup: BeautifulSoup, base_url: str) -> str:
+    """Visible text of a page, scripts/styles stripped, whitespace collapsed.
+
+    Link destinations are preserved in parentheses right after their anchor
+    text (e.g. "Sign Up Now (https://forms.gle/abc123)"). Plain
+    soup.get_text() silently drops every <a href>, which meant a coffee chat
+    link sitting right on the page was invisible to the model even though
+    the button text ("Sign Up Now") survived - see qa/research_agent_review.md.
+    """
     for tag in soup(["script", "style", "noscript"]):
         tag.extract()
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+            continue
+        absolute = urljoin(base_url, href)
+        a.append(NavigableString(f" ({absolute})"))
     text = soup.get_text(separator=" ", strip=True)
     return re.sub(r"\s+", " ", text)[:MAX_PAGE_CHARS]
 
 
 def _find_secondary_url(soup: BeautifulSoup, base_url: str, already_fetched: str) -> str | None:
-    """Look for a nav link whose text or href suggests events/join/recruit/
-    apply/contact info, and return its absolute URL (or None)."""
+    """Look for a same-domain nav link whose text or href suggests events/
+    join/recruit/apply/contact info, and return its absolute URL (or None).
+
+    Restricted to the same domain as base_url so a stray keyword match (e.g.
+    a "Contact" link that happens to point at someone's LinkedIn profile)
+    can't send the second fetch off-site - see the Blockchain at Cornell
+    case in qa/research_agent_review.md.
+    """
+    base_domain = urlparse(base_url).netloc
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
         if href.startswith(("#", "mailto:", "tel:", "javascript:")):
@@ -109,6 +138,8 @@ def _find_secondary_url(soup: BeautifulSoup, base_url: str, already_fetched: str
         if not any(keyword in haystack for keyword in SECONDARY_LINK_KEYWORDS):
             continue
         absolute = urljoin(base_url, href)
+        if urlparse(absolute).netloc != base_domain:
+            continue
         if absolute != already_fetched:
             return absolute
     return None
@@ -126,7 +157,7 @@ def research_club(website_url: str) -> dict:
         return _empty_result(website_url, error=f"Could not fetch {website_url}")
 
     pages_checked = [website_url]
-    texts = [_page_text(soup)]
+    texts = [_page_text(soup, website_url)]
 
     if MAX_PAGES > 1:
         secondary_url = _find_secondary_url(soup, website_url, website_url)
@@ -134,7 +165,7 @@ def research_club(website_url: str) -> dict:
             secondary_soup = _fetch(secondary_url)
             if secondary_soup is not None:
                 pages_checked.append(secondary_url)
-                texts.append(_page_text(secondary_soup))
+                texts.append(_page_text(secondary_soup, secondary_url))
 
     combined_text = "\n\n".join(
         f"--- Page: {url} ---\n{text}" for url, text in zip(pages_checked, texts)

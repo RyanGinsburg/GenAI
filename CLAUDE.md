@@ -47,17 +47,47 @@ club-agent/
 ## Current status
 
 **Immediate next step (do this first if asked "what needs to be done"):**
-Step 4 (backend/services/research_agent.py) is code-complete and committed,
-but not yet marked done — it's waiting on a manual review. Open
-qa/research_agent_review.md, and for each of the 20 real club websites
-listed: open the site's own website_url yourself, check whether the
-extracted fields (application_deadline, next_meeting, info_session,
-coffee_chat_link) are actually correct and that nothing true on the site
-was missed, then fill in that club's "Verified?" checkbox row. Report back
-what you find (especially anything wrong or missed) so it can get fixed.
-Once that review is done, Step 4 gets marked done here and Step 5 (backend/
-main.py — a FastAPI app wiring matching.py, resume_parser.py, and
-research_agent.py together) starts.
+The manual review of research_agent.py (qa/research_agent_review.md) found
+two real bugs on 2026-09-03; both are now fixed in code, but NOT yet
+re-verified against the live Claude API, so Step 4 is still not marked
+done. Before starting Step 5, run `qa/research_agent_review.py` again
+(needs a working `.env` with ANTHROPIC_API_KEY) and confirm Cornell Wall
+Street Club now returns real data and the previously-missed coffee chat
+links now show up.
+
+1. **Coffee chat links were missed systematically** (6 of 7 real ones
+   missed: Cornell Business Analytics Club, Cornell XR, 180 Degrees
+   Consulting, Cornell FinTech Club, AppDev at Cornell, Investment Banking
+   Club). Root cause: `_page_text()` in research_agent.py used
+   `soup.get_text()`, which strips all `<a href>` URLs and keeps only the
+   visible link text (e.g. "Sign Up Now"), so Claude was never actually
+   given the URL even when a coffee chat link was right there on the page.
+   Fixed: `_page_text()` now appends each link's absolute URL in
+   parentheses after its anchor text, and the prompt tells the model to use
+   it. Confirmed (by re-processing the saved HTML directly, without an API
+   call) that the target URLs now appear in the extracted text for Cornell
+   Wall Street Club, AppDev, and Cornell Business Analytics.
+2. **Cornell Wall Street Club (cornell-wsc.com/recruitment.html) came back
+   entirely not_found when it should have been a real hit.** Turned out NOT
+   to be JS rendering as originally suspected — the raw static HTML already
+   has the real timeline/deadline/coffee-chat link well within the char
+   limit. The actual cause: a stale "details will be announced soon" hero
+   banner sits above the real, filled-in timeline on the same page, and the
+   model appears to have let that vague banner suppress the concrete dates
+   below it. Fixed by adding an explicit rule to SYSTEM_PROMPT that a vague
+   placeholder elsewhere on the page must not override concrete data that's
+   also present.
+
+Also fixed: for Blockchain at Cornell, `_find_secondary_url` had followed
+an off-domain LinkedIn profile URL instead of a real club page; it's now
+restricted to same-domain links only.
+
+Full detail (including the corrected root-cause writeup for Cornell Wall
+Street Club) is in qa/research_agent_review.md. Once a live-API re-run
+confirms the fixes actually change the model's output for these clubs,
+Step 4 gets marked done here and Step 5 (backend/main.py — a FastAPI app
+wiring matching.py, resume_parser.py, and research_agent.py together)
+starts.
 
 Step 0 (skeleton), Step 1 (scraper), and Step 2 (embeddings + matching) done.
 scraper/scrape_campusgroups.py scrapes Cornell's CampusGroups directory by
