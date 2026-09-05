@@ -1,9 +1,9 @@
 """Research a club's website for deadlines, meetings, and coffee chats.
 
 Given a club's website_url:
-1. Fetch the page, and if an obvious nav link looks like it points to
-   events/join/recruit/apply/contact info, fetch that page too (max 2 pages
-   total).
+1. Fetch the page with a real (headless) browser, and if an obvious nav link
+   looks like it points to events/join/recruit/apply/contact info, fetch
+   that page too (max 2 pages total).
 2. Ask Claude to extract: application_deadline, next_meeting, info_session,
    coffee_chat_link.
 3. Return a structured result. If nothing was found, set not_found: true
@@ -13,6 +13,18 @@ Given a club's website_url:
 Per CLAUDE.md's "never fabricate" constraint: the model is explicitly told
 not to guess or infer anything not actually stated on the page(s) — any
 field it can't find comes back null, not a plausible-looking guess.
+
+Why a headless browser instead of a plain HTTP GET: confirmed 2026-09-05 on
+Applied Public Policy Strategies at Cornell (appscornell.org) that a plain
+`requests.get()` completely misses content a site injects into the DOM via
+client-side JS after page load — that club's real application deadline and
+two info-session dates live in a hardcoded array inside its script.js,
+appended to the page by JS on DOMContentLoaded, and simply don't exist
+anywhere in the server-sent HTML. A person visiting the site in a browser
+sees them fine; the old requests-based fetch never could. See
+qa/research_agent_review.md for the full trace. Rendering with Playwright's
+headless Chromium and reading the *rendered* DOM fixes this generally,
+rather than special-casing this one site.
 """
 
 from __future__ import annotations
@@ -22,21 +34,27 @@ import re
 from urllib.parse import urljoin, urlparse
 
 import anthropic
-import requests
 from bs4 import BeautifulSoup, NavigableString
 from dotenv import load_dotenv
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import sync_playwright
 
 load_dotenv()
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (compatible; CornellClubAgent/0.1; "
-        "student project, contact via github.com/RyanGinsburg/GenAI)"
-    )
-}
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; CornellClubAgent/0.1; "
+    "student project, contact via github.com/RyanGinsburg/GenAI)"
+)
 REQUEST_TIMEOUT_SECONDS = 15
 MAX_PAGES = 2
-MAX_PAGE_CHARS = 12000  # keep the prompt a reasonable size on very long pages
+MAX_PAGE_CHARS = 25000  # keep the prompt a reasonable size on very long pages
+# 12000 was fine when pages were plain server-rendered HTML, but rendering
+# JS-injected content (see the module docstring) makes pages meaningfully
+# longer -- e.g. team bios + FAQ + a recruitment timeline all render into
+# one page's text -- and the old cap silently truncated the actual deadline
+# off the end of Applied Public Policy Strategies' page (confirmed
+# 2026-09-05: its full rendered text is ~13.8k chars). 25000 chars is still
+# cheap for claude-sonnet-5 and leaves real headroom over that.
 
 MODEL = "claude-sonnet-5"
 
@@ -82,6 +100,21 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
+_playwright = None
+_browser = None
+
+
+def _get_browser():
+    """Lazily launch one headless Chromium instance, reused across every
+    _fetch() call in this process (launching a fresh browser per call would
+    add multiple seconds to every research_club() call)."""
+    global _playwright, _browser
+    if _browser is None:
+        _playwright = sync_playwright().start()
+        _browser = _playwright.chromium.launch(headless=True)
+    return _browser
+
+
 def _empty_result(website_url: str, error: str | None = None) -> dict:
     result = {"website_url": website_url, **{f: None for f in RESULT_FIELDS}, "not_found": True}
     if error:
@@ -90,13 +123,30 @@ def _empty_result(website_url: str, error: str | None = None) -> dict:
 
 
 def _fetch(url: str) -> BeautifulSoup | None:
-    """Fetch and parse one page. Returns None on any request failure."""
+    """Fetch a page with a headless browser, letting its JS actually run,
+    then parse the rendered DOM. Returns None on any failure (unreachable
+    site, navigation timeout, etc.) — never raises.
+
+    "domcontentloaded" (not the slower "networkidle") is enough for the
+    client-side-injected-content case this exists for: DOMContentLoaded is
+    exactly the event sites like appscornell.org hook to inject their
+    content, and waiting for full network idle would also make this hang on
+    any page with long-polling analytics/chat widgets.
+    """
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
-        resp.raise_for_status()
-    except requests.RequestException:
+        browser = _get_browser()
+        page = browser.new_page(user_agent=USER_AGENT)
+        try:
+            response = page.goto(url, timeout=REQUEST_TIMEOUT_SECONDS * 1000, wait_until="domcontentloaded")
+            if response is None or response.status >= 400:
+                return None
+            page.wait_for_timeout(500)  # let synchronous post-DOMContentLoaded JS finish
+            html = page.content()
+        finally:
+            page.close()
+    except PlaywrightError:
         return None
-    return BeautifulSoup(resp.text, "html.parser")
+    return BeautifulSoup(html, "html.parser")
 
 
 def _page_text(soup: BeautifulSoup, base_url: str) -> str:

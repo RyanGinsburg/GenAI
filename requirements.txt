@@ -12,6 +12,12 @@ uvicorn
 requests
 beautifulsoup4
 
+# Headless-browser page fetching for research_agent.py — plain requests.get()
+# can't see content a site injects via client-side JS after page load (see
+# research_agent.py's module docstring). After installing this, also run:
+#   .venv/bin/python -m playwright install chromium
+playwright
+
 # LLM extraction + reasoning
 anthropic
 

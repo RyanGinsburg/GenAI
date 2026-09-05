@@ -58,14 +58,21 @@
 
 ### Whose turn is it right now
 _(update this line every handoff so it's never ambiguous)_
-> Currently: the two bugs found in the 2026-09-03 QA review of
-> research_agent.py are fixed in code, but not yet re-verified against the
-> live Claude API — see CLAUDE.md's "Current status" section and
-> `qa/research_agent_review.md` for details.
-> **Next step:** run `qa/research_agent_review.py` again (needs
-> ANTHROPIC_API_KEY in `.env`) and confirm Cornell Wall Street Club now
-> returns real data and the previously-missed coffee chat links show up.
-> Once confirmed, Step 5 (`backend/main.py`) starts.
+> Currently: research_agent.py's fetch was rewritten 2026-09-05 to use a
+> headless browser (Playwright) instead of a plain HTTP GET — it was
+> missing content that sites inject via client-side JS after page load
+> (confirmed on Applied Public Policy Strategies at Cornell). Re-run
+> against the live API, this fixed both 2026-09-03 bugs for real plus two
+> bonus wins — see CLAUDE.md's "Current status" for the full breakdown.
+> `qa/research_agent_review.md` was regenerated with the new results, which
+> reset every "Verified?" checkbox.
+> **Next step:** do a fresh manual pass on `qa/research_agent_review.md` —
+> open each of the 20 sites, confirm the newly-extracted fields (two known,
+> already-documented quirks don't need re-flagging: AppDev's missing
+> coffee_chat_link, and Cornell Business Analytics' info_session count).
+> After `pip install -r requirements.txt`, also run
+> `python -m playwright install chromium` once. Once the review is done,
+> Step 5 (`backend/main.py`) starts.
 
 ### Rules
 - **Only one of us works in the repo at a time.** If it's not your turn,
