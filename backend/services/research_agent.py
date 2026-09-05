@@ -58,7 +58,16 @@ MAX_PAGE_CHARS = 25000  # keep the prompt a reasonable size on very long pages
 
 MODEL = "claude-sonnet-5"
 
-SECONDARY_LINK_KEYWORDS = ("events", "join", "recruit", "apply", "contact")
+# Ordered by priority, most likely to hold real recruiting/deadline info first.
+# "apply"/"recruit"/"join" pages are where clubs actually put deadlines and
+# application forms; "events"/"contact" pages are far more likely to be
+# generic. _find_secondary_url picks the highest-priority match across ALL
+# links on the page, not just the first one encountered in the HTML - see
+# qa/research_agent_review.md for real cases (Cornell Real Estate Club,
+# Cornell Consulting Club, Cornell Algo Trading Club, Quant Fund at Cornell)
+# where a generic "events"/"contact" link that happened to appear earlier in
+# the page was followed instead of the club's actual recruiting page.
+SECONDARY_LINK_KEYWORDS = ("apply", "recruit", "join", "events", "contact")
 RESULT_FIELDS = ("application_deadline", "next_meeting", "info_session", "coffee_chat_link")
 
 SYSTEM_PROMPT = """You extract recruiting/event details from a student club's website text.
@@ -171,8 +180,18 @@ def _page_text(soup: BeautifulSoup, base_url: str) -> str:
 
 
 def _find_secondary_url(soup: BeautifulSoup, base_url: str, already_fetched: str) -> str | None:
-    """Look for a same-domain nav link whose text or href suggests events/
-    join/recruit/apply/contact info, and return its absolute URL (or None).
+    """Look for a same-domain nav link whose text or href suggests apply/
+    recruit/join/events/contact info, and return the absolute URL of the
+    highest-priority match (by position in SECONDARY_LINK_KEYWORDS) found
+    anywhere on the page - not just the first matching link encountered in
+    the HTML. A page's nav often has both a generic link (e.g. "Contact",
+    "Events") and the actual recruiting page (e.g. "Apply"); taking whichever
+    came first in the markup meant the real page was frequently skipped in
+    favor of a generic one that happened to appear earlier - see Cornell
+    Real Estate Club, Cornell Consulting Club, Cornell Algo Trading Club, and
+    Quant Fund at Cornell in qa/research_agent_review.md, all of which have
+    a real recruiting timeline on an /apply-style page that was missed this
+    way.
 
     Restricted to the same domain as base_url so a stray keyword match (e.g.
     a "Contact" link that happens to point at someone's LinkedIn profile)
@@ -180,19 +199,22 @@ def _find_secondary_url(soup: BeautifulSoup, base_url: str, already_fetched: str
     case in qa/research_agent_review.md.
     """
     base_domain = urlparse(base_url).netloc
+    best: tuple[int, str] | None = None
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
         if href.startswith(("#", "mailto:", "tel:", "javascript:")):
             continue
         haystack = f"{a.get_text(strip=True)} {href}".lower()
-        if not any(keyword in haystack for keyword in SECONDARY_LINK_KEYWORDS):
+        matches = [i for i, kw in enumerate(SECONDARY_LINK_KEYWORDS) if kw in haystack]
+        if not matches:
             continue
         absolute = urljoin(base_url, href)
-        if urlparse(absolute).netloc != base_domain:
+        if urlparse(absolute).netloc != base_domain or absolute == already_fetched:
             continue
-        if absolute != already_fetched:
-            return absolute
-    return None
+        priority = min(matches)
+        if best is None or priority < best[0]:
+            best = (priority, absolute)
+    return best[1] if best else None
 
 
 def research_club(website_url: str) -> dict:
