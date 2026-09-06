@@ -1,0 +1,271 @@
+.app {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 28px 20px 96px;
+}
+
+/* Header: a plain functional bar, not a marketing hero. The red rule is
+   the only flourish here - the "flyer board" personality is reserved for
+   the results grid below, not smeared across every element. */
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  margin-bottom: 28px;
+  border-bottom: 3px solid var(--red);
+}
+
+header h1 {
+  font-size: 19px;
+  font-weight: 800;
+  color: var(--red);
+  white-space: nowrap;
+}
+
+.tagline {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Chat form - functional UI chrome: flat, modest corners, no tilt. */
+
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.chat-form textarea {
+  font: inherit;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.chat-form__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chat-form__file {
+  font-size: 14px;
+  color: var(--muted);
+  border: 1px dashed #c7c5c2;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.chat-form__file input {
+  display: none;
+}
+
+.chat-form button,
+.calendar-bar button {
+  background: var(--red);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-form button:hover,
+.calendar-bar button:hover:not(:disabled) {
+  background: var(--red-dark);
+}
+
+.chat-form button:disabled,
+.calendar-bar button:disabled {
+  background: #e3b9b9;
+  cursor: not-allowed;
+}
+
+.error-banner {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--red-tint);
+  color: var(--red-dark);
+  border-radius: 6px;
+}
+
+/* Results: a pinboard, not a feed. Cards sit at a small resting tilt
+   (see TILT_SEQUENCE in ClubCard.jsx) and straighten + lift on hover -
+   the one deliberate interaction/layout idea driving this whole redesign.
+   A CSS grid (not a single column) so browsing feels like scanning a
+   board, and align-items: start so a card's own height (which changes
+   once it's researched) never distorts its row-mates. */
+
+.results {
+  margin-top: 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 28px 20px;
+  align-items: start;
+}
+
+.club-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 18px;
+  transform: rotate(var(--tilt, 0deg));
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.club-card:hover,
+.club-card:focus-within {
+  transform: rotate(0deg) translateY(-3px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+.club-card__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.club-card__header h3 {
+  font-size: 16px;
+}
+
+.club-card__score {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--red-dark);
+  background: var(--red-tint);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.club-card__category {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.club-card__description {
+  font-size: 14px;
+  color: #333;
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.club-card__footer {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.club-card__footer a {
+  font-size: 14px;
+  color: var(--red);
+  text-decoration: none;
+}
+
+.club-card__footer a:hover {
+  text-decoration: underline;
+}
+
+.club-card__footer button {
+  background: transparent;
+  border: 1.5px solid var(--red);
+  color: var(--red);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.club-card__footer button:hover {
+  background: var(--red-tint);
+}
+
+/* Research panel */
+
+.research-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.research-status {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.research-status--error {
+  color: var(--red-dark);
+}
+
+.event-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.event-checkbox input {
+  margin-top: 3px;
+  accent-color: var(--red);
+}
+
+.coffee-chat-link {
+  font-size: 14px;
+  color: var(--red);
+  text-decoration: none;
+  width: fit-content;
+}
+
+.coffee-chat-link:hover {
+  text-decoration: underline;
+}
+
+/* Calendar confirmation bar - functional chrome, stays flat like the form. */
+
+.calendar-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border-top: 2px solid var(--red);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.calendar-bar__status {
+  flex-basis: 100%;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}

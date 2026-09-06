@@ -19,6 +19,7 @@ dist/
 # whole directory, but derived artifacts are not.
 data/embeddings.npy
 data/embeddings_meta.json
+data/research_cache.json
 data/cache/
 
 # Uploaded resumes are personal data — never commit them.

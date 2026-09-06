@@ -1,5 +1,5 @@
-"""Match a student's profile to clubs: embedding search over data/clubs.json,
-then re-ranking.
+"""Match a student's profile to clubs: embedding search over
+data/clubs_filtered.json, then re-ranking.
 
 Embeddings are cached to data/embeddings.npy so they aren't regenerated per run.
 
@@ -7,6 +7,15 @@ Uses a local sentence-transformers model (all-MiniLM-L6-v2) — no API key
 needed, runs on CPU, fast enough for ~1500 clubs. If we ever need a bigger
 model or hosted embeddings, swap _embed_texts()/_get_model() only; the
 caching and match_clubs() interface stay the same.
+
+Uses the filtered 877-club set (scraper/filter_clubs.py), not the full
+1521-club data/clubs.json — the excluded ~640 are grad orgs, academic
+departments, housing, and social Greek life, none of which are what an
+undergrad asking "what club should I join" wants matched. See
+filter_clubs.py's module docstring for the exact rules. Regenerate
+data/clubs_filtered.json (via `python scraper/filter_clubs.py`) after any
+change to data/clubs.json; the embeddings cache below auto-invalidates
+when the source text changes.
 """
 
 from __future__ import annotations
@@ -18,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
-CLUBS_PATH = DATA_DIR / "clubs.json"
+CLUBS_PATH = DATA_DIR / "clubs_filtered.json"
 EMBEDDINGS_PATH = DATA_DIR / "embeddings.npy"
 EMBEDDINGS_META_PATH = DATA_DIR / "embeddings_meta.json"
 
@@ -37,7 +46,7 @@ def _get_model():
 
 
 def load_clubs() -> list[dict]:
-    """Load the scraped club directory from data/clubs.json."""
+    """Load the filtered, undergrad-facing club directory."""
     with open(CLUBS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 

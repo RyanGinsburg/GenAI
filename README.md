@@ -58,24 +58,22 @@
 
 ### Whose turn is it right now
 _(update this line every handoff so it's never ambiguous)_
-> Currently: Step 4 (research_agent.py) is done. Two parallel fixes landed
-> this week and are now merged together: Yair's 2026-09-03 fixes (coffee
-> chat link visibility, Wall Street Club's banner-suppression bug, and a
-> secondary-link-priority bug) plus a 2026-09-05 rewrite to fetch pages
-> with a headless browser (Playwright) instead of a plain HTTP GET, since
-> some sites inject their real content via client-side JS that a plain
-> HTTP GET never sees (confirmed on Applied Public Policy Strategies at
-> Cornell). Combined, the 20-site sample is now at 13/20 genuine hits (up
-> from 11/20 and 9/20 for either fix alone) — see CLAUDE.md's "Current
-> status" for the full breakdown. `qa/research_agent_review.md` was
-> regenerated against the combined code, which reset every "Verified?"
-> checkbox.
-> **Next step:** Step 5 — build `backend/main.py`, a FastAPI app wiring
-> together matching.py, resume_parser.py, and research_agent.py (see
-> BUILD_PROMPTS.md's Step 5 prompt). A fresh manual pass on
-> `qa/research_agent_review.md` can happen alongside it, not blocking it.
-> After `pip install -r requirements.txt`, also run
-> `python -m playwright install chromium` once.
+> Currently: Step 6 (frontend/) is done as of 2026-09-06 — a Vite + React
+> app (chat box + optional resume upload, matched club cards, a per-club
+> "Get info" button that only researches that club when clicked, checkbox
+> selection, and a stub "Add to Google Calendar" bar). Driven end-to-end
+> with a live backend + browser automation, not just eyeballed — real
+> query → real matches → real researched deadlines → working checkboxes →
+> stub calendar confirmation, zero console errors. See CLAUDE.md's
+> "Current status" for the full breakdown.
+> **Next step:** Step 7 (the last one) — Google Calendar OAuth
+> (backend/services/calendar_sync.py + POST /calendar/add-events). Needs
+> manual Google Cloud Console setup that can't be automated — see
+> BUILD_PROMPTS.md's Step 7 prompt. To run the app locally: backend
+> (`uvicorn backend.main:app --reload`, needs
+> `python -m playwright install chromium` once after pip install) and
+> frontend (`cd frontend && npm install && npm run dev`) both running at
+> the same time.
 
 ### Rules
 - **Only one of us works in the repo at a time.** If it's not your turn,

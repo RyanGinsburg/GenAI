@@ -46,6 +46,12 @@ club-agent/
 
 ## Current status
 
+**Immediate next step (do this first if asked "what needs to be done"):**
+Step 6 (frontend/) is done as of 2026-09-06 — see that section below. Next
+up is Step 7: Google Calendar OAuth (backend/services/calendar_sync.py +
+a POST /calendar/add-events route), the last step. Needs manual Google
+Cloud Console setup (OAuth credentials) that can't be automated.
+
 **Step 4 (backend/services/research_agent.py) is done as of 2026-09-05.**
 Two people worked on it in parallel this week and both sets of fixes are
 now merged together in code: Yair found and fixed three real bugs via a
@@ -58,11 +64,7 @@ higher than either fix alone (11/20 for the priority-link fix by itself,
 9/20 for the headless-browser fix by itself), confirming they catch
 different, complementary classes of miss rather than overlapping.
 
-**Immediate next step: Step 5 — build backend/main.py**, a FastAPI app
-wiring together matching.py, resume_parser.py, and research_agent.py (see
-BUILD_PROMPTS.md's Step 5 prompt for the exact routes/shape:
-POST /chat and POST /research, no auth/database, simple per-club error
-handling). qa/research_agent_review.md has been regenerated against the
+qa/research_agent_review.md has been regenerated against the
 combined code and its "Verified?" checkboxes are unchecked again (expected
 — the underlying results changed) but this isn't blocking Step 5; a
 review pass can happen alongside it.
@@ -154,11 +156,29 @@ Also done 2026-09-05, separately: created data/clubs_filtered.json (877 of
 the 1521 clubs) via the new scraper/filter_clubs.py — see its module
 docstring for the exact category rules and the two judgment calls made
 (professional fraternities kept, competitive club sports kept). Bonus:
-100% of the 877 have a description, vs. ~90% for the full 1521. Not yet
-wired into matching.py/embeddings.npy — those still run against the full
-data/clubs.json.
+100% of the 877 have a description, vs. ~90% for the full 1521.
+matching.py was switched over to it as part of Step 5 (below).
 
-Full detail is in qa/research_agent_review.md.
+Sanity-checked research_agent.py further 2026-09-06 with a genuinely
+random 50-club sample (data/clubs_filtered.json, not the curated 20):
+15/50 (30%) genuine hits with real verbatim data, the other 35 correctly
+not_found. Of those 35, 6 had an actual fetch problem rather than "site
+has no info" — all investigated rather than left as an unexplained
+error count: 2 clubs have a literal `https://www.idonothaveawebsite.com/`
+placeholder in data/clubs.json itself (a scrape data-quality fact, not a
+bug), 1 is a genuinely dead/unresolving domain (capsucornell.org), 1 is a
+stale URL path that 404s (PulseGuard's Wix page), 1 is a real transient
+flake (navy.cornell.edu failed in the batch run but fetched cleanly on a
+manual retry seconds later), and 1 is a new, distinct limitation: 
+scl.cornell.edu/convocation returns 403 to Playwright's headless Chromium
+specifically (confirmed with our real User-Agent) - looks like WAF/bot
+detection on Cornell's own site, not fixed or worked around. Also updates
+the earlier campusgroups.com-hosted-sites-never-hit claim from the 20-site
+sample (that was 0/7, too small a sample): this 50-club sample got 4/19
+(~21%) hits on campusgroups.com URLs vs. 11/31 (~35%) on independently-
+hosted ones - lower, but not zero.
+
+Full detail on the 20-site curated sample is in qa/research_agent_review.md.
 
 Step 0 (skeleton), Step 1 (scraper), and Step 2 (embeddings + matching) done.
 scraper/scrape_campusgroups.py scrapes Cornell's CampusGroups directory by
@@ -242,13 +262,77 @@ with published timelines — most other clubs (a cappella, outing club,
 policy blogs, etc.) just don't operate that way, so this is the correct
 output of a working extractor, not under-extraction.
 
-Idea raised 2026-09-03, acted on 2026-09-05: data/clubs.json has 1521
-clubs but many are inactive/low-signal for this use case (grad orgs,
-academic departments, housing, social Greek life). scraper/filter_clubs.py
-now produces data/clubs_filtered.json, 877 undergrad-facing clubs — see
-its module docstring for the exact rules. Not yet wired into
-matching.py/embeddings.npy.
+**Step 5 (backend/main.py) is done as of 2026-09-06.** A FastAPI app with
+the two routes from BUILD_PROMPTS.md, both curl-tested against a live
+server:
+- **POST /chat** — takes `message` (form field) and an optional `resume`
+  file upload. If a resume is given, parse_resume() runs and, when it
+  succeeds, its `suggested_club_interests` get folded into the query text
+  before matching (tested with a real resume: correctly biased matches
+  toward finance/cybersecurity/fintech clubs matching that resume's actual
+  skills). Returns matched clubs (name/category/description/website_url/
+  score only) plus the parsed resume_profile (or its error).
+  **Explicit design decision (requested 2026-09-06): /chat never calls
+  research_agent.py.** Matching and researching are fully decoupled —
+  getting a club's deadline/meeting/coffee-chat info is only ever a
+  separate, explicit POST /research call, so nothing slow or
+  Claude-API-costly happens just from browsing matches. The frontend
+  (Step 6) should only hit /research when a student clicks something like
+  a "get info" button on a specific club card.
+- **POST /research** — takes `{"website_urls": [...]}`, runs
+  research_club() on each. Each call is individually wrapped in try/except
+  even though research_club() already never raises, per BUILD_PROMPTS'
+  explicit ask that one club's failure can't take down the whole request.
 
-Other service files under backend/services/ are still docstring-only stubs.
-frontend/ is a placeholder (Node not installed yet — `brew install node`
-before Step 6).
+New: backend/services/research_cache.py, a flat data/research_cache.json
+keyed by website_url with a 24h TTL, sitting in front of research_club()
+inside the /research route (not inside research_agent.py itself, which
+stays a pure fetch-and-extract function with no caching concerns). Curl-
+tested: an uncached 2-club /research call took ~11.7s; the identical
+repeat call took ~0.015s. Deliberately does NOT cache a result that has an
+"error" key, so a transient failure (like the navy.cornell.edu flake noted
+above) gets retried on the next request instead of being stuck returning
+"could not fetch" for the full TTL.
+
+Also as part of Step 5: matching.py now loads data/clubs_filtered.json
+(877 clubs) instead of the full data/clubs.json (1521) — re-verified the
+sample query from Step 2 ("sustainability and climate policy clubs, low
+time commitment") still returns GreenClub top-of-list with the smaller
+set. requirements.txt gained `python-multipart` (FastAPI needs it for
+Form(...)/UploadFile parsing in /chat). CORS is enabled for
+localhost:3000/127.0.0.1:3000 only (dev default for the Step 6 frontend —
+tighten before any real deployment).
+
+**Step 6 (frontend/) is done as of 2026-09-06.** Node was installed
+(`brew install node`, v26.8.1) and the app scaffolded with Vite + React.
+Fixed the dev server to port 3000 in vite.config.js (Vite's default 5173
+didn't match backend/main.py's CORS allowlist).
+
+- `ChatForm` — message + optional resume upload, POSTs to /chat.
+- `ClubCard` — one matched club; a "Get info" button that POSTs to
+  /research **only when clicked** (explicit design decision from Step 5 —
+  never automatic). Once researched: checkboxes for whichever of
+  application_deadline/next_meeting/info_session were actually found (the
+  calendar-eligible, dated fields), coffee_chat_link shown as a plain link
+  (it's a booking link, not something with its own start/end time so it
+  doesn't make sense as a checkbox), or a message distinguishing "nothing
+  posted" from "couldn't check the site right now" (based on whether the
+  research result carried an `error`).
+- `CalendarBar` — sticky bottom bar, live count of checked events, "Add to
+  Google Calendar" button. **Stub for now** (BUILD_PROMPTS.md's own
+  instruction for this step) — clicking it never contacts Google, just
+  confirms what would be added; Step 7 wires the real thing.
+
+Driven end-to-end with Playwright against a live uvicorn + vite dev server
+(not just eyeballed): submitted a real query, got real matched clubs,
+clicked "Get info" and got real extracted deadline/info-session data
+rendered with working checkboxes, confirmed the not_found message renders
+correctly for a club with nothing posted, uploaded a real resume through
+the actual file input (not just curl) and confirmed resume-informed
+matches came back, and clicked through the checkbox → "Add to Google
+Calendar" stub flow. Zero browser console errors across all of this.
+Screenshots taken during this pass are in the session's scratchpad only,
+not committed.
+
+Other service files under backend/services/ (calendar_sync.py) are still
+docstring-only stubs.

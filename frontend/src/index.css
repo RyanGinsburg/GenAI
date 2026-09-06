@@ -1,0 +1,29 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+
+  /* One warm accent (Cornell carnelian) against cool, quiet neutrals -
+     deliberately not the cream+terracotta or violet-SaaS defaults. */
+  --red: #b31b1b;
+  --red-dark: #8a1414;
+  --red-tint: #fbe9e9;
+  --ink: #1c1b1a;
+  --muted: #6b6a67;
+  --page-bg: #f2f3f5;
+  --card-bg: #fff;
+  --border: #e1e2e6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--page-bg);
+  color: var(--ink);
+}
+
+h1, h2, h3 {
+  margin: 0;
+}
