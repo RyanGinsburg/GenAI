@@ -34,6 +34,11 @@ numpy
 # Local embedding model for club matching (Step 2, matching.py)
 sentence-transformers
 
+# Accounts: stateless login tokens (Authorization: Bearer <token>). Password
+# hashing uses the stdlib (hashlib.pbkdf2_hmac) — no extra dependency there.
+# SQLite (data/app.db) uses the stdlib sqlite3 module — no dependency either.
+pyjwt
+
 # Not pinned yet — versions are still settling. Pin with `pip freeze` once the
 # pipeline works end to end.
 #

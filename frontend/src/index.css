@@ -12,6 +12,12 @@
   --page-bg: #f2f3f5;
   --card-bg: #fff;
   --border: #e1e2e6;
+  --surface-muted: #f7f7f8;
+
+  /* Clean-modern elevation: a single soft shadow at rest, a slightly
+     stronger one on hover - even across every card, no per-card gimmick. */
+  --shadow-1: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-2: 0 8px 20px rgba(0, 0, 0, 0.1);
 }
 
 * {

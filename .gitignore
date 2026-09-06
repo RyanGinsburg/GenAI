@@ -20,6 +20,7 @@ dist/
 data/embeddings.npy
 data/embeddings_meta.json
 data/research_cache.json
+data/app.db
 data/cache/
 
 # Uploaded resumes are personal data — never commit them.

@@ -15,20 +15,42 @@ Google Calendar.
   store vectors in a local file (numpy array or Chroma), no hosted vector DB
 - Frontend: React
 - Calendar: Google Calendar API (OAuth2)
-- Data: scraped JSON files in /data, not a full database (for MVP)
+- Data: scraped JSON files in /data for club data. **Exception, discussed and
+  approved 2026-09-06**: user accounts (name/email/password) and saved-club
+  lists live in SQLite (data/app.db, stdlib sqlite3, no ORM) instead of JSON —
+  passwords and concurrent per-user writes are exactly the case flat JSON
+  files handle badly (no locking, easy to corrupt). Club data itself
+  (clubs.json/clubs_filtered.json) stays JSON as before.
+- Accounts: stateless JWT (`Authorization: Bearer <token>`, pyjwt), password
+  hashing via stdlib hashlib.pbkdf2_hmac (not bcrypt/passlib — avoids a
+  compiled-extension dependency). No server-side session table.
 
 ## Project structure
 club-agent/
   scraper/              # scrapes CampusGroups directory -> data/clubs.json
-  data/                 # clubs.json, embeddings.npy, cache files
+  data/                 # clubs.json, clubs_filtered.json, embeddings.npy,
+                         # app.db (accounts/saved clubs), cache files
   backend/
-    routes/             # FastAPI route handlers
+    paths.py            # shared DATA_DIR/RESUME_DIR/DB_PATH constants
+    db.py                # SQLite: users, saved_clubs tables, raw CRUD
+    routes/              # FastAPI route handlers, one module per concern:
+      auth_routes.py       # /auth/register, /auth/login, /auth/me
+      chat_routes.py        # /chat/message, /chat/resume
+      matching_routes.py     # /matching/from-profile
+      research_routes.py      # /research
+      saved_clubs_routes.py    # /clubs/saved (GET/POST/POST remove)
+      browse_routes.py          # /clubs (search/filter/paginate)
     services/
-      matching.py        # embedding search + re-ranking
+      matching.py        # embedding search + re-ranking + diversity fix
       resume_parser.py    # PDF -> structured profile
       research_agent.py   # fetch club site -> extract structured info
-      calendar_sync.py    # Google Calendar OAuth + event creation
-  frontend/              # React app
+      chat_profile.py      # multi-turn conversational profile-builder
+      categorize.py         # Professional/Social-Fun/Community Service tagging
+      auth.py                # password hashing, JWT issue/verify, get_current_user
+      accounts.py             # register/login validation on top of db.py + auth.py
+      saved_clubs.py           # "My Clubs" save/unsave/list
+      calendar_sync.py          # Google Calendar OAuth + event creation (stub)
+  frontend/              # React app - Chat / Browse Clubs / My Clubs sections
   .env.example
   README.md
 
@@ -47,10 +69,100 @@ club-agent/
 ## Current status
 
 **Immediate next step (do this first if asked "what needs to be done"):**
-Step 6 (frontend/) is done as of 2026-09-06 — see that section below. Next
-up is Step 7: Google Calendar OAuth (backend/services/calendar_sync.py +
-a POST /calendar/add-events route), the last step. Needs manual Google
-Cloud Console setup (OAuth credentials) that can't be automated.
+A major post-Step-6 feature pass landed 2026-09-06 (accounts, a
+conversational profile-builder replacing the old search box, a real
+matching bug fix, Browse/My Clubs sections, and a visual redesign) - see
+the dated section below for full detail. The only step from
+BUILD_PROMPTS.md still open is **Step 7: Google Calendar OAuth**
+(backend/services/calendar_sync.py + a POST /calendar/add-events route).
+Needs manual Google Cloud Console setup (OAuth credentials) that can't be
+automated.
+
+**2026-09-06: accounts, conversational matching, a real matching bug fix,
+and a visual redesign.** User testing after Step 6 surfaced three real
+problems, all addressed together:
+
+1. **Matching bug, root-caused and fixed.** A resume with 7 diverse
+   `suggested_club_interests` (5 finance-flavored, 2 not) returned zero of
+   the 36 "Project Team"-tagged clubs and a max score around 45-53%. Cause:
+   the old `match_clubs()` joined all interests into one string and
+   embedded it as a single blended vector, which drifts toward whichever
+   topic dominates the phrase list and drowns out minority topics -
+   confirmed a single-topic robotics query surfaces Project Team clubs
+   fine (0.45-0.46), so this was specifically a multi-topic-blended-into-
+   one-vector problem, not a broken embedding model (0.45-0.60 top scores
+   are otherwise the normal ceiling here). Fixed by adding
+   `match_clubs_multi_query()` in matching.py: embeds each interest
+   separately and pools the top-k clubs **per interest** before merging,
+   so a minority topic can't be out-voted by a blended average. Verified
+   live end-to-end through the real UI: a chat profile of
+   robotics + heavy finance interests now surfaces Combat Robotics at
+   Cornell, AutoBoat at Cornell, Autonomous Sailboat Club, and CU Design
+   Build Fly alongside the finance clubs. `matching.py`'s `__main__` block
+   has a permanent regression assertion for this (0 hits via the old
+   blended query, >0 via the new one).
+2. **The single search textbox is gone, replaced by a real multi-turn
+   conversational profile-builder** (backend/services/chat_profile.py,
+   frontend ChatAssistant.jsx). Stateless (frontend resends full history
+   each turn), same "return ONLY JSON" convention as resume_parser.py/
+   research_agent.py, asks up to 5 short questions (interests, professional
+   vs. social vs. both, time commitment), can take a resume attachment at
+   any point (not just turn one) which feeds resume context into the
+   conversation, and ends by producing a structured profile that
+   `match_clubs_for_profile()` turns into results. Results are grouped into
+   Professional / Social & Fun / Community Service via
+   services/categorize.py - a **deterministic string match over the
+   existing CampusGroups category tags already in clubs_filtered.json**
+   (`PROF:`/`AFFILIATION: Project Team`/`AFFILIATION: Professional
+   Fraternity` -> Professional; `Community Service` tag -> Community
+   Service; else -> Social/Fun), not a new LLM call - sanity-checked
+   against all 877 clubs: 235/544/98.
+   **Bug found and fixed during Playwright testing**: while a resume was
+   uploading (before its own chat turn even started), the text input
+   wasn't disabled, so a manually-typed message could race the resume-
+   triggered turn and corrupt conversation history via a stale `history`
+   closure. Fixed by gating the text input, send button, and file input
+   all on one combined `busy = sending || resumeUploading` flag.
+3. **Accounts + "My Clubs" + "Browse Clubs".** New SQLite-backed accounts
+   (see the tech-stack exception above) via backend/db.py,
+   services/auth.py, services/accounts.py, routes/auth_routes.py.
+   **Login only gates saving a club / viewing My Clubs** - chatting and
+   browsing the full 877-club directory (routes/browse_routes.py, search +
+   category filter + pagination, frontend BrowseClubs.jsx) work fully
+   anonymously, so there's no wall before a student's even seen a club.
+   Clicking "Save" while logged out opens the auth modal instead of a
+   network call. services/saved_clubs.py stores only
+   `(user_id, website_url)` in SQLite and resolves full club details from
+   clubs_filtered.json at read time, so there's one source of truth for
+   club data and My Clubs can't go stale relative to it.
+4. **Visual redesign to a "clean modern app" look** (whitespace, refined
+   type scale, subtle consistent elevation, quiet color use) - this
+   **fully retires the "pinboard of tilted cards" concept** from the prior
+   redesign pass (TILT_SEQUENCE and the rotate-on-hover CSS are gone
+   entirely) in favor of flat, evenly-elevated cards. Cornell carnelian red
+   stays the sole accent. Also removed every remaining em dash from
+   user-facing copy (was 3: two in App.jsx, one in ClubCard.jsx) and wrote
+   all new copy (chat messages, auth forms, section copy) without any -
+   confirmed via a full-page text grep during the Playwright pass.
+
+Loading feedback added throughout: a spinner for each chat turn ("Reading
+your resume..." / "Thinking..."), an indeterminate progress bar for
+"Finding your clubs..." after the interview ends, and spinners for
+Browse Clubs' initial load and each "Get info" check.
+
+Verified end-to-end with Playwright against live `uvicorn --reload` +
+`vite` dev servers (not just eyeballed, and not just curl): a full chat
+interview including a mid-conversation resume attach, transition to
+grouped results, Save-while-logged-out correctly opening the auth modal
+instead of hitting the network, registration + auto-login + a real save,
+My Clubs showing the saved club with full resolved details, Browse Clubs
+search/filter/pagination with no score badge shown, logout correctly
+reverting My Clubs to the login prompt, the existing Get-info/checkbox/
+calendar-stub flow still working unchanged, and zero browser console
+errors and zero em dashes anywhere across the entire pass.
+
+research_agent.py accuracy work was explicitly out of scope for this pass
+(the user is handling that separately) - not touched.
 
 **Step 4 (backend/services/research_agent.py) is done as of 2026-09-05.**
 Two people worked on it in parallel this week and both sets of fixes are
@@ -262,9 +374,13 @@ with published timelines — most other clubs (a cappella, outing club,
 policy blogs, etc.) just don't operate that way, so this is the correct
 output of a working extractor, not under-extraction.
 
-**Step 5 (backend/main.py) is done as of 2026-09-06.** A FastAPI app with
-the two routes from BUILD_PROMPTS.md, both curl-tested against a live
-server:
+**Step 5 (backend/main.py) is done as of 2026-09-06.** (Superseded later
+the same day - see the "2026-09-06: accounts, conversational matching..."
+section above. `POST /chat` described just below no longer exists; it was
+replaced by `/chat/message` + `/chat/resume` + `/matching/from-profile`.
+Keeping this section for the historical record of what Step 5 originally
+shipped.) A FastAPI app with the two routes from BUILD_PROMPTS.md, both
+curl-tested against a live server:
 - **POST /chat** — takes `message` (form field) and an optional `resume`
   file upload. If a resume is given, parse_resume() runs and, when it
   succeeds, its `suggested_club_interests` get folded into the query text
@@ -303,7 +419,10 @@ Form(...)/UploadFile parsing in /chat). CORS is enabled for
 localhost:3000/127.0.0.1:3000 only (dev default for the Step 6 frontend —
 tighten before any real deployment).
 
-**Step 6 (frontend/) is done as of 2026-09-06.** Node was installed
+**Step 6 (frontend/) is done as of 2026-09-06.** (Also superseded later the
+same day - `ChatForm` described just below was deleted and replaced by
+`ChatAssistant`/`ChatSection`, and `NavBar`/`BrowseClubs`/`MyClubs`/
+`AuthModal` were added; see the section above.) Node was installed
 (`brew install node`, v26.8.1) and the app scaffolded with Vite + React.
 Fixed the dev server to port 3000 in vite.config.js (Vite's default 5173
 didn't match backend/main.py's CORS allowlist).

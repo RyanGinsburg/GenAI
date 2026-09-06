@@ -112,7 +112,11 @@ def get_club_embeddings(clubs: list[dict]) -> np.ndarray:
 
 def match_clubs(query: str, top_k: int = 10) -> list[dict]:
     """Embed `query` and return the top_k most similar clubs by cosine
-    similarity. Each result is the club dict plus a "score" field."""
+    similarity. Each result is the club dict plus a "score" field.
+
+    Kept as-is for single-topic queries (e.g. browse/search). For a list of
+    several distinct interests, use match_clubs_multi_query() instead - see
+    its docstring for why a single blended query is the wrong tool there."""
     clubs = load_clubs()
     embeddings = get_club_embeddings(clubs)
 
@@ -130,6 +134,77 @@ def match_clubs(query: str, top_k: int = 10) -> list[dict]:
     return results
 
 
+def match_clubs_multi_query(
+    interests: list[str], top_k_total: int = 30, top_k_per_interest: int = 8
+) -> list[dict]:
+    """Fixes a real bug: joining several distinct interests into one string
+    and embedding it as a single vector produces a blended embedding that
+    drifts toward whichever topic dominates the phrase list, silently
+    drowning out minority topics. Confirmed live: a resume-derived query of
+    7 interests (5 finance-ish, 2 not) returned zero of the 36 "Project
+    Team"-tagged clubs in data/clubs_filtered.json, even though a
+    single-topic robotics query surfaces Project Team clubs fine
+    (0.45-0.46 cosine similarity).
+
+    Fix: embed each interest separately, and pool the top_k_per_interest
+    clubs PER INTEREST (not per blended score) into one candidate set
+    before final sorting - so a club that's the best match for one
+    minority topic still makes it in, rather than needing to also beat
+    every candidate from the majority topic on one shared, averaged score.
+
+    Each result carries "matched_interest": the interest phrase that
+    produced its best score (useful for showing "why this was suggested").
+    """
+    clubs = load_clubs()
+    if not interests:
+        return []
+
+    embeddings = get_club_embeddings(clubs)
+    interest_embeddings = _embed_texts(interests)  # (n_interests, dim), already normalized
+
+    scores_by_interest = embeddings @ interest_embeddings.T  # (n_clubs, n_interests)
+
+    best_score: dict[int, float] = {}
+    best_interest: dict[int, str] = {}
+
+    for interest_idx, interest in enumerate(interests):
+        interest_scores = scores_by_interest[:, interest_idx]
+        top_indices = np.argsort(-interest_scores)[:top_k_per_interest]
+        for club_idx in top_indices:
+            score = float(interest_scores[club_idx])
+            if score > best_score.get(club_idx, -1.0):
+                best_score[club_idx] = score
+                best_interest[club_idx] = interest
+
+    ranked_indices = sorted(best_score, key=lambda i: -best_score[i])[:top_k_total]
+
+    results = []
+    for i in ranked_indices:
+        club = dict(clubs[i])
+        club["score"] = best_score[i]
+        club["matched_interest"] = best_interest[i]
+        results.append(club)
+    return results
+
+
+_MODE_PHRASES = {
+    "professional": "professional development and career-focused clubs",
+    "social": "social and fun clubs",
+}
+
+
+def match_clubs_for_profile(profile: dict, top_k_total: int = 30) -> list[dict]:
+    """Turns a chat-built profile into match_clubs_multi_query() candidates.
+    Pure function, no LLM call - matching stays deterministic. profile is
+    the shape services/chat_profile.py produces: {"interests": [...],
+    "mode": "professional"|"social"|"both", "time_commitment": ..., "notes": ...}."""
+    interests = list(profile.get("interests") or [])
+    mode_phrase = _MODE_PHRASES.get(profile.get("mode") or "")
+    if mode_phrase:
+        interests.append(mode_phrase)
+    return match_clubs_multi_query(interests, top_k_total=top_k_total)
+
+
 if __name__ == "__main__":
     sample_query = "sustainability and climate policy clubs, low time commitment"
     print(f"Query: {sample_query!r}\n")
@@ -139,3 +214,27 @@ if __name__ == "__main__":
         desc = club.get("description") or "(no description)"
         print(f"   description: {desc[:150]}")
         print()
+
+    # Permanent regression check for the diversity bug: a finance-heavy
+    # interest list should still surface Project Team/robotics clubs once
+    # "robotics" is one of the interests, via match_clubs_multi_query -
+    # the old single-blended-query match_clubs() cannot do this.
+    print("--- Diversity fix regression check ---")
+    interests = [
+        "robotics",
+        "quantitative finance and trading",
+        "fintech",
+        "entrepreneurship and startups",
+        "private equity",
+        "investment banking",
+        "consulting",
+    ]
+    blended = match_clubs(", ".join(interests), top_k=20)
+    multi = match_clubs_multi_query(interests, top_k_total=20)
+    blended_hits = sum(1 for c in blended if "Project Team" in (c["category"] or ""))
+    multi_hits = sum(1 for c in multi if "Project Team" in (c["category"] or ""))
+    print(f"Old blended query: {blended_hits} Project Team clubs in top 20")
+    print(f"New multi-query:   {multi_hits} Project Team clubs in top 20")
+    assert blended_hits == 0, "expected the old bug to still reproduce on this query"
+    assert multi_hits > 0, "match_clubs_multi_query should recover Project Team clubs"
+    print("PASS")

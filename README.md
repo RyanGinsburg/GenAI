@@ -58,22 +58,28 @@
 
 ### Whose turn is it right now
 _(update this line every handoff so it's never ambiguous)_
-> Currently: Step 6 (frontend/) is done as of 2026-09-06 — a Vite + React
-> app (chat box + optional resume upload, matched club cards, a per-club
-> "Get info" button that only researches that club when clicked, checkbox
-> selection, and a stub "Add to Google Calendar" bar). Driven end-to-end
-> with a live backend + browser automation, not just eyeballed — real
-> query → real matches → real researched deadlines → working checkboxes →
-> stub calendar confirmation, zero console errors. See CLAUDE.md's
-> "Current status" for the full breakdown.
+> Currently: a big post-Step-6 feature pass landed 2026-09-06 on top of the
+> working app: real user accounts (SQLite, JWT login), the old single
+> search box replaced by a multi-turn conversational profile-builder that
+> can take a resume attachment mid-conversation, a real matching bug fixed
+> (a multi-topic resume query was silently drowning out minority interests
+> like robotics in favor of whatever topic dominated the phrase list),
+> results now grouped into Professional/Social & Fun/Community Service, a
+> "Browse Clubs" directory with search/filter, a "My Clubs" saved-clubs
+> section, loading spinners/progress bars throughout, and a full visual
+> redesign to a flatter "clean modern app" look (the earlier pinboard/tilt
+> concept is retired). All driven end-to-end with a live backend + browser
+> automation, not just eyeballed. See CLAUDE.md's "Current status" for the
+> full breakdown.
 > **Next step:** Step 7 (the last one) — Google Calendar OAuth
 > (backend/services/calendar_sync.py + POST /calendar/add-events). Needs
 > manual Google Cloud Console setup that can't be automated — see
 > BUILD_PROMPTS.md's Step 7 prompt. To run the app locally: backend
-> (`uvicorn backend.main:app --reload`, needs
-> `python -m playwright install chromium` once after pip install) and
-> frontend (`cd frontend && npm install && npm run dev`) both running at
-> the same time.
+> (`uvicorn backend.main:app --reload`, needs `JWT_SECRET_KEY` set in
+> `.env` — see `.env.example` — and `python -m playwright install
+> chromium` once after pip install) and frontend
+> (`cd frontend && npm install && npm run dev`) both running at the same
+> time.
 
 ### Rules
 - **Only one of us works in the repo at a time.** If it's not your turn,
