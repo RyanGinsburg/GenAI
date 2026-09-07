@@ -39,6 +39,9 @@ SYSTEM_PROMPT = """You extract structured information from a college student's r
 
 Return ONLY a single JSON object (no markdown fences, no commentary) with exactly these keys:
 - "major": string or null - the student's declared major(s)/field of study, if stated
+- "school_or_college": string or null - the student's Cornell school/college (e.g.
+  "College of Engineering", "College of Arts and Sciences", "Dyson"), ONLY if
+  literally stated in the text - never inferred from the major alone.
 - "graduation_year": integer or null - expected graduation year, if stated
 - "skills": array of strings - technical or professional skills explicitly listed on the resume
 - "interests": array of strings - interests/hobbies explicitly stated on the resume (do not infer these from skills, coursework, or work experience)
@@ -46,8 +49,8 @@ Return ONLY a single JSON object (no markdown fences, no commentary) with exactl
 - "suggested_club_interests": array of 3-8 short phrases describing the kinds of clubs/professional communities this student would likely want to join - e.g. "artificial intelligence", "quantitative finance", "cybersecurity". This is the one field where you should reason over the whole resume (major, coursework, projects, skills, work/research experience) rather than only quoting explicit statements - but stay grounded in what's actually on the resume, don't speculate about areas with no supporting evidence.
 
 Rules:
-- Every field except "suggested_club_interests" must only contain what is explicitly stated in the text. Do not guess, infer, or fabricate those.
-- If a field isn't present in the text, use null (for major/graduation_year) or an empty array (for the list fields).
+- Every field except "suggested_club_interests" must only contain what is explicitly stated in the text. Do not guess, infer, or fabricate those. school_or_college follows the same literal-only rule as major/graduation_year.
+- If a field isn't present in the text, use null (for major/graduation_year/school_or_college) or an empty array (for the list fields).
 - Output must be valid JSON and nothing else.
 """
 

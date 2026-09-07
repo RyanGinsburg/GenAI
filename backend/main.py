@@ -7,8 +7,10 @@ SQLite db, and includes the routers.
   Authorization: Bearer <token>. See services/auth.py, services/accounts.py.
 - /chat/* — the conversational profile-builder (replaces the old one-shot
   POST /chat). See services/chat_profile.py.
-- /matching/from-profile — turns a built profile into grouped club matches.
-  See services/matching.py's match_clubs_for_profile / services/categorize.py.
+- /matching/from-profile, /matching/refine — turns a built profile into
+  diversified, grouped club matches, and re-searches from a conversational
+  follow-up. See services/matching.py's match_clubs_diversified /
+  services/categorize.py.
 - /clubs — browse/search/filter the full club directory, no auth needed.
 - /clubs/saved — a logged-in user's saved clubs (requires auth).
 - /research — per-club deadline/meeting/coffee-chat lookup, called only

@@ -36,16 +36,18 @@ club-agent/
     routes/              # FastAPI route handlers, one module per concern:
       auth_routes.py       # /auth/register, /auth/login, /auth/me
       chat_routes.py        # /chat/message, /chat/resume
-      matching_routes.py     # /matching/from-profile
+      matching_routes.py     # /matching/from-profile, /matching/refine
       research_routes.py      # /research
       saved_clubs_routes.py    # /clubs/saved (GET/POST/POST remove)
       browse_routes.py          # /clubs (search/filter/paginate)
     services/
-      matching.py        # embedding search + re-ranking + diversity fix
+      matching.py        # embedding search + category-aware diversification
       resume_parser.py    # PDF -> structured profile
       research_agent.py   # fetch club site -> extract structured info
-      chat_profile.py      # multi-turn conversational profile-builder
-      categorize.py         # Professional/Social-Fun/Community Service tagging
+      chat_profile.py      # multi-turn conversational profile-builder + refine
+      categorize.py         # Professional/Cultural-Affinity/Social-Fun/
+                             #   Community Service tagging
+      profile_schema.py      # shared StudentProfile shape + merge/readiness
       auth.py                # password hashing, JWT issue/verify, get_current_user
       accounts.py             # register/login validation on top of db.py + auth.py
       saved_clubs.py           # "My Clubs" save/unsave/list
@@ -69,14 +71,118 @@ club-agent/
 ## Current status
 
 **Immediate next step (do this first if asked "what needs to be done"):**
-A major post-Step-6 feature pass landed 2026-09-06 (accounts, a
-conversational profile-builder replacing the old search box, a real
-matching bug fix, Browse/My Clubs sections, and a visual redesign) - see
-the dated section below for full detail. The only step from
+A pass on 2026-09-07 expanded the chat profile schema and made matching
+category-aware/diversified, plus added conversational refine after
+results - see the dated section below for full detail. The only step from
 BUILD_PROMPTS.md still open is **Step 7: Google Calendar OAuth**
 (backend/services/calendar_sync.py + a POST /calendar/add-events route).
 Needs manual Google Cloud Console setup (OAuth credentials) that can't be
 automated.
+
+**2026-09-07: richer chat profile, deterministic readiness/merge,
+diversified matching, conversational refine.** Expanded on the
+2026-09-06 conversational profile-builder per explicit new requirements:
+
+1. **Profile schema expanded from 4 loosely-defined fields
+   (`interests`/`mode`/`time_commitment`/`notes`) to 7 named fields**:
+   `school_or_college`, `major`, `vibe` (`social`/`professional`/`both`,
+   renamed from `mode`), `activity_level` (`low`/`medium`/`high`, renamed
+   from `time_commitment`), `specific_interests_in_mind` (array),
+   `hobbies` (array), `openness_to_cultural_affinity_groups`
+   (`yes`/`open`/`not_sure`) - phrased in the system prompt as a warm,
+   open invitation to see cultural/identity-based/affinity clubs,
+   **never** asking the student to state their own race/ethnicity/other
+   personal characteristics. New backend/services/profile_schema.py is
+   the single source of truth for this shape (a Pydantic `StudentProfile`
+   plus pure `merge_profile()`/`is_ready_for_matching()` functions),
+   replacing four previously-duplicated, inconsistent versions of the
+   profile shape (chat_profile.py's prompt text, matching.py's docstring,
+   matching_routes.py's non-enum-constrained Pydantic model, and the
+   frontend's implicit usage). `specific_interests_in_mind`/`hobbies` are
+   the topic-bearing fields the LLM fills in as arrays of short phrases;
+   there's no separate `interests` field anymore - matching.py's new
+   `build_interest_phrases()` derives query phrases from them directly at
+   match time, deliberately never blending them into one string (would
+   reintroduce the exact 2026-09-06 diversity bug).
+2. **Readiness and merging are now enforced in Python, not just prompt
+   text.** `profile_schema.is_ready_for_matching()` sets an explicit low
+   bar (vibe + at least one concrete topic + 3+ fields filled) and
+   OR's with the model's own `ready_for_matching` judgment, plus a hard
+   `MAX_TURNS = 3` backstop; `merge_profile()` deterministically merges
+   each turn's `profile_delta` into the running profile so nothing
+   previously established gets silently dropped. Verified live: the test
+   case "I'm a sophomore in Engineering, want a mix of professional and
+   fun clubs, not too intense time-wise" correctly does NOT clear the bar
+   on turn 1 alone (school/vibe/activity_level but no major/interest/
+   hobby yet), asks exactly one natural follow-up, then clears it on turn
+   2 - two exchanges total, the intended normal case.
+3. **Matching is now category-aware, via new
+   `matching.match_clubs_diversified()`** (replaces
+   `match_clubs_for_profile()`, which read now-nonexistent `interests`/
+   `mode` keys). For a clearly single vibe ("professional"/"social") it
+   delegates to the existing flat `match_clubs_multi_query()` - no forced
+   diversification, respecting the student's stated preference. For
+   `"both"`/unset vibe, it runs a **separate** `match_clubs_multi_query()`
+   per target category (Professional, Social/Fun), filters each bucket's
+   candidates through `categorize_club()` so embedding similarity alone
+   can't leak an off-category club into a bucket, allocates an even quota
+   per bucket, and interleaves - this is what actually fixes "a mix of
+   professional and fun could come back all one type" (the old
+   `match_clubs_for_profile()`/`match_clubs_multi_query()` pooling had no
+   category awareness at all; diversification only ever existed as a
+   post-hoc *display* grouping in categorize.py, fully decoupled from
+   ranking). `activity_level` folds in as a soft embedding-text bias
+   phrase per bucket (no time-commitment metadata exists on clubs, same
+   soft-bias approach as the existing sustainability sanity check).
+   Verified live end-to-end for the Engineering test case above: results
+   correctly split across both Professional and Social/Fun (15/15 of a
+   30-result set), not a lopsided single-category list.
+4. **A `Cultural/Affinity` category was added to categorize.py**, keyed
+   on CampusGroups' own `"International/Multicultural"` tag (111/877
+   clubs) - checked against real data first: the previously-considered
+   alternative of gating on the existing `Community Service` tag would
+   have missed the great majority of actual cultural/affinity clubs (only
+   8 of the 111 also carry a Community Service tag). It only gets an
+   active, guaranteed quota slot in `match_clubs_diversified()` when
+   `openness_to_cultural_affinity_groups == "yes"` specifically (a clear
+   affirmative) - `"open"`/`"not_sure"` get no special treatment, per
+   explicit product decision to treat that field as a genuine invitation
+   rather than a default-on nudge. Since this category is global (not
+   diversification-specific), `frontend/src/components/BrowseClubs.jsx`'s
+   category filter buttons and `categorize.py`'s own sanity counts were
+   updated too (Professional 235 / Cultural-Affinity 111 / Social-Fun 441
+   / Community-Service 90 of 877, confirmed live).
+5. **Conversational refine after results** - new
+   `chat_profile.refine_profile()` (single-turn, no history) interprets a
+   follow-up like "show me more social ones" or "something with less time
+   commitment" into a `profile_delta`, and new `POST /matching/refine`
+   bundles that plus a re-run of `match_clubs_diversified()` into one
+   round trip. The frontend no longer unmounts the chat entirely once
+   results appear (the old `ChatSection.jsx` behavior) - a new
+   `RefineBar.jsx` stays alongside `MatchResults`, reusing the `busy`-
+   gating pattern already established in `ChatAssistant.jsx`. Verified
+   live: typing "show me more social ones" after initial results updated
+   `vibe` to `"social"` and refreshed results in place, with the running
+   profile/chat state intact (no restart).
+6. **New `qa/verify_profile_and_matching.py`** scripts the full test case
+   above against the real, non-mocked `continue_profile_chat`/
+   `match_clubs_diversified` functions, printing the turn-by-turn
+   conversation trace with profile snapshots and the final grouped/
+   labeled club list, and asserts both Professional and Social/Fun come
+   back non-empty (a regression check in the same spirit as matching.py's
+   own diversity-bug assert). `resume_parser.py` also gained a literal-
+   only `school_or_college` extraction field (same no-fabrication rule as
+   `major`/`graduation_year`) so a resume can pre-fill it.
+
+Verified end-to-end with a real Playwright pass against live `uvicorn
+--reload` + `vite` dev servers (not just the qa script): the full 2-turn
+chat interview, diversified results rendering correctly grouped, the
+refine bar updating results in place without losing state, and Browse
+Clubs' `Cultural/Affinity` filter button correctly filtering to 111
+clubs - zero browser console errors throughout. The existing
+`matching.py` diversity-bug regression assert (blended query still gets 0
+Project Team hits, multi-query recovers more than 0) was re-run unchanged
+and still passes.
 
 **2026-09-06: accounts, conversational matching, a real matching bug fix,
 and a visual redesign.** User testing after Step 6 surfaced three real

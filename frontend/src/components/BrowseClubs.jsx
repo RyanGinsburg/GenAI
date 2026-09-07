@@ -3,7 +3,7 @@ import ClubCard from './ClubCard'
 import LoadingIndicator from './LoadingIndicator'
 import { browseClubs } from '../api'
 
-const CATEGORIES = ['All', 'Professional', 'Social/Fun', 'Community Service']
+const CATEGORIES = ['All', 'Professional', 'Cultural/Affinity', 'Social/Fun', 'Community Service']
 
 export default function BrowseClubs({ research, selections, onGetInfo, onToggleSelection, savedUrls, onToggleSave }) {
   const [query, setQuery] = useState('')

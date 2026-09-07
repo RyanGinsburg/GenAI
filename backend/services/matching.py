@@ -26,6 +26,8 @@ from pathlib import Path
 
 import numpy as np
 
+from backend.services.categorize import categorize_club
+
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 CLUBS_PATH = DATA_DIR / "clubs_filtered.json"
 EMBEDDINGS_PATH = DATA_DIR / "embeddings.npy"
@@ -187,25 +189,148 @@ def match_clubs_multi_query(
     return results
 
 
-_MODE_PHRASES = {
-    "professional": "professional development and career-focused clubs",
-    "social": "social and fun clubs",
+_VIBE_BUCKET_PHRASES = {
+    "Professional": "professional development and career-focused clubs",
+    "Social/Fun": "social and fun clubs",
 }
+_ACTIVITY_LEVEL_PHRASES = {
+    "low": "a casual, low time commitment club to join",
+    "high": "an active, high time commitment club to join",
+}
+_CULTURAL_AFFINITY_PHRASE = "a cultural, identity-based, or affinity student group"
+_CULTURAL_AFFINITY_QUOTA = 4
 
 
-def match_clubs_for_profile(profile: dict, top_k_total: int = 30) -> list[dict]:
-    """Turns a chat-built profile into match_clubs_multi_query() candidates.
-    Pure function, no LLM call - matching stays deterministic. profile is
-    the shape services/chat_profile.py produces: {"interests": [...],
-    "mode": "professional"|"social"|"both", "time_commitment": ..., "notes": ...}."""
-    interests = list(profile.get("interests") or [])
-    mode_phrase = _MODE_PHRASES.get(profile.get("mode") or "")
-    if mode_phrase:
-        interests.append(mode_phrase)
-    return match_clubs_multi_query(interests, top_k_total=top_k_total)
+def build_interest_phrases(profile: dict) -> list[str]:
+    """Deterministically turns major/specific_interests_in_mind/hobbies into
+    separate short phrases for match_clubs_multi_query() - never blended
+    into one string, which would reintroduce the exact bug that function
+    exists to fix. school_or_college/vibe/activity_level are handled
+    separately in match_clubs_diversified() as soft bucket-phrase biases,
+    not raw topics."""
+    phrases = []
+    if profile.get("major"):
+        phrases.append(str(profile["major"]))
+    phrases += [p for p in (profile.get("specific_interests_in_mind") or []) if p]
+    phrases += [p for p in (profile.get("hobbies") or []) if p]
+    return phrases
+
+
+def match_clubs_diversified(profile: dict, top_k_total: int = 30) -> list[dict]:
+    """Profile -> matches, category-aware. profile is the StudentProfile
+    shape from services/profile_schema.py.
+
+    For a clearly single vibe ("professional"/"social"), delegates to a
+    flat match_clubs_multi_query - respects the student's stated
+    preference, no forced diversification. For "both" or unset/null vibe
+    (treated as wanting variety), runs a SEPARATE match_clubs_multi_query
+    per target category and filters each bucket's candidates through
+    categorize_club() so embedding similarity alone can't leak an
+    off-category club into a bucket, then interleaves quota'd results -
+    this is what actually fixes the "mix of professional and fun could
+    come back all one type" problem, since match_clubs_multi_query's own
+    pooling has no category awareness at all.
+
+    A Cultural/Affinity bucket only gets an active, guaranteed quota slot
+    when openness_to_cultural_affinity_groups is exactly "yes" (a clear
+    affirmative) - "open"/"not_sure" get no special treatment, consistent
+    with treating that field as a genuine invitation rather than a
+    default-on nudge.
+    """
+    vibe = profile.get("vibe")
+    base_phrases = build_interest_phrases(profile)
+    activity_phrase = _ACTIVITY_LEVEL_PHRASES.get(profile.get("activity_level") or "")
+    want_cultural = profile.get("openness_to_cultural_affinity_groups") == "yes"
+
+    if vibe in ("professional", "social"):
+        bucket = "Professional" if vibe == "professional" else "Social/Fun"
+        phrases = base_phrases + [_VIBE_BUCKET_PHRASES[bucket]]
+        if activity_phrase:
+            phrases.append(activity_phrase)
+        if want_cultural:
+            phrases.append(_CULTURAL_AFFINITY_PHRASE)
+        return match_clubs_multi_query(phrases, top_k_total=top_k_total)
+
+    # "both" / missing vibe: diversify across Professional + Social/Fun.
+    target_buckets = ["Professional", "Social/Fun"]
+    cultural_quota = _CULTURAL_AFFINITY_QUOTA if want_cultural else 0
+    remaining = max(top_k_total - cultural_quota, 2)
+    per_bucket = remaining // len(target_buckets)
+    leftover = remaining - per_bucket * len(target_buckets)
+
+    pooled: dict[str, list[dict]] = {}
+    for i, bucket in enumerate(target_buckets):
+        phrases = base_phrases + [_VIBE_BUCKET_PHRASES[bucket]]
+        if activity_phrase:
+            phrases.append(activity_phrase)
+        quota = per_bucket + (1 if i < leftover else 0)
+        candidates = match_clubs_multi_query(phrases, top_k_total=max(quota * 3, 10))
+        pooled[bucket] = [c for c in candidates if categorize_club(c) == bucket][:quota]
+
+    if want_cultural:
+        phrases = base_phrases + [_CULTURAL_AFFINITY_PHRASE]
+        if activity_phrase:
+            phrases.append(activity_phrase)
+        candidates = match_clubs_multi_query(phrases, top_k_total=cultural_quota * 3)
+        pooled["Cultural/Affinity"] = [
+            c for c in candidates if categorize_club(c) == "Cultural/Affinity"
+        ][:cultural_quota]
+
+    # Round-robin interleave (a presentation nicety - group_clubs_by_category()
+    # re-buckets for display regardless; the quota step above is what
+    # actually fixes the diversity bug).
+    order = [b for b in ("Professional", "Social/Fun", "Cultural/Affinity") if b in pooled]
+    interleaved: list[dict] = []
+    seen: set[str] = set()
+    idx = 0
+    while len(interleaved) < top_k_total:
+        progressed = False
+        for bucket in order:
+            items = pooled[bucket]
+            if idx < len(items):
+                club = items[idx]
+                if club.get("website_url") not in seen:
+                    interleaved.append(club)
+                    seen.add(club.get("website_url"))
+                progressed = True
+        idx += 1
+        if not progressed:
+            break
+    return interleaved
+
+
+def debug_query(query: str, top_k: int = 10) -> None:
+    """Diagnostic helper: print the raw embedding behavior for `query`
+    through both matching paths, full scores + full (untruncated)
+    description text, no re-ranking applied. For tracking down bad top
+    matches (e.g. "law" surfacing Cornell Real Estate Club) - run via
+    `python -m backend.services.matching <query>`."""
+    print(f"=== debug_query({query!r}) ===\n")
+
+    print(f"--- match_clubs() [single-vector path] top {top_k} ---\n")
+    for rank, club in enumerate(match_clubs(query, top_k=top_k), start=1):
+        print(f"{rank}. {club['name']}  (score={club['score']:.4f})")
+        print(f"   category: {club['category']}")
+        print(f"   description: {club.get('description') or '(no description)'}")
+        print()
+
+    print(f"--- match_clubs_multi_query([query]) [production path] top {top_k} ---\n")
+    for rank, club in enumerate(
+        match_clubs_multi_query([query], top_k_total=top_k), start=1
+    ):
+        print(f"{rank}. {club['name']}  (score={club['score']:.4f})")
+        print(f"   category: {club['category']}")
+        print(f"   description: {club.get('description') or '(no description)'}")
+        print()
 
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1:
+        debug_query(" ".join(sys.argv[1:]))
+        raise SystemExit(0)
+
     sample_query = "sustainability and climate policy clubs, low time commitment"
     print(f"Query: {sample_query!r}\n")
     for rank, club in enumerate(match_clubs(sample_query, top_k=5), start=1):

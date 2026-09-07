@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from backend.paths import RESUME_DIR
 from backend.services.chat_profile import continue_profile_chat
+from backend.services.profile_schema import StudentProfile
 from backend.services.resume_parser import parse_resume
 
 router = APIRouter(prefix="/chat")
@@ -25,13 +26,14 @@ class ChatTurn(BaseModel):
 
 class ChatMessageRequest(BaseModel):
     history: list[ChatTurn]
+    profile: StudentProfile = StudentProfile()
     resume_profile: dict | None = None
 
 
 @router.post("/message")
 def message(req: ChatMessageRequest):
     history = [{"role": turn.role, "content": turn.content} for turn in req.history]
-    return continue_profile_chat(history, resume_profile=req.resume_profile)
+    return continue_profile_chat(history, profile=req.profile.model_dump(), resume_profile=req.resume_profile)
 
 
 @router.post("/resume")

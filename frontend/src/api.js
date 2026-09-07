@@ -43,11 +43,11 @@ export async function getCurrentUser(token) {
 
 // --- Chat / profile-building ---
 
-export async function postChatMessage(history, resumeProfile) {
+export async function postChatMessage(history, profile, resumeProfile) {
   const res = await fetch(`${API_BASE}/chat/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ history, resume_profile: resumeProfile }),
+    body: JSON.stringify({ history, profile, resume_profile: resumeProfile }),
   })
   return asJson(res, 'Chat')
 }
@@ -68,6 +68,15 @@ export async function postMatchingFromProfile(profile) {
     body: JSON.stringify({ profile }),
   })
   return asJson(res, 'Matching')
+}
+
+export async function postMatchingRefine(profile, message) {
+  const res = await fetch(`${API_BASE}/matching/refine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile, message }),
+  })
+  return asJson(res, 'Refining matches')
 }
 
 // --- Research (unchanged route; always an explicit per-club action) ---

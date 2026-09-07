@@ -204,6 +204,43 @@
   cursor: pointer;
 }
 
+.refine-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.refine-bar input[type='text'] {
+  flex: 1;
+  min-width: 200px;
+  font: inherit;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.refine-bar button[type='submit'] {
+  background: var(--red);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.refine-bar button[type='submit']:hover {
+  background: var(--red-dark);
+}
+
+.refine-bar button[type='submit']:disabled {
+  background: #e3b9b9;
+  cursor: not-allowed;
+}
+
 /* Category groups */
 
 .category-group {

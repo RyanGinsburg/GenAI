@@ -21,20 +21,27 @@ PROFESSIONAL_MARKERS = (
     "AFFILIATION: Professional Fraternity",
 )
 COMMUNITY_SERVICE_MARKER = "Community Service"
+CULTURAL_AFFINITY_MARKER = "International/Multicultural"
 
-CATEGORY_ORDER = ["Professional", "Social/Fun", "Community Service"]
+CATEGORY_ORDER = ["Professional", "Cultural/Affinity", "Social/Fun", "Community Service"]
 
 
 def categorize_club(club: dict) -> str:
-    """Priority: Professional > Community Service > Social/Fun (catch-all).
-    Professional is checked first since PROF:/Project Team/Professional
-    Fraternity are the least ambiguous "career-relevant" signals; a club
-    that's both professional and service-oriented (e.g. a pre-med
-    community-service-heavy professional fraternity) reads more usefully
-    under Professional."""
+    """Priority: Professional > Cultural/Affinity > Community Service >
+    Social/Fun (catch-all). Professional is checked first since
+    PROF:/Project Team/Professional Fraternity are the least ambiguous
+    "career-relevant" signals; a club that's both professional and
+    service-oriented (e.g. a pre-med community-service-heavy professional
+    fraternity) reads more usefully under Professional. Cultural/Affinity
+    uses CampusGroups' own "International/Multicultural" tag (118/877
+    clubs) - a far more precise proxy for cultural/affinity interest than
+    Community Service (only 8 of those 118 also carry a Community Service
+    tag)."""
     category = club.get("category") or ""
     if any(marker in category for marker in PROFESSIONAL_MARKERS):
         return "Professional"
+    if CULTURAL_AFFINITY_MARKER in category:
+        return "Cultural/Affinity"
     if COMMUNITY_SERVICE_MARKER in category:
         return "Community Service"
     return "Social/Fun"

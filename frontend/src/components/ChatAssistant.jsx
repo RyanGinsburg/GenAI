@@ -7,6 +7,7 @@ const GREETING =
 
 export default function ChatAssistant({ onProfileReady }) {
   const [history, setHistory] = useState([])
+  const [profile, setProfile] = useState({})
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [resumeProfile, setResumeProfile] = useState(null)
@@ -20,11 +21,12 @@ export default function ChatAssistant({ onProfileReady }) {
     setSending(true)
     setError(null)
     try {
-      const data = await postChatMessage(nextHistory, currentResumeProfile)
+      const data = await postChatMessage(nextHistory, profile, currentResumeProfile)
       if (data.error) {
         setError(data.error)
       }
       setHistory([...nextHistory, { role: 'assistant', content: data.reply }])
+      setProfile(data.profile)
       if (data.ready_for_matching) {
         onProfileReady(data.profile)
       }
