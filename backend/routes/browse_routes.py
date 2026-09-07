@@ -19,6 +19,22 @@ router = APIRouter()
 PAGE_SIZE = 24
 
 
+def _search_priority(club: dict, search: str) -> int:
+    """Rank a substring match by where the hit occurs, so a club whose name
+    or category is actually about the query term outranks one where the
+    term just happens to appear once in a longer description. Bug this
+    fixes: searching "law" put Cornell Real Estate Club first (its
+    description lists "hospitality, law, architecture..." among the
+    disciplines it draws on) ahead of every real law-focused club, because
+    the plain substring filter had no relevance ordering at all - it just
+    returned matches in clubs_filtered.json's original order."""
+    if search in (club.get("name") or "").lower():
+        return 0
+    if search in (club.get("category") or "").lower():
+        return 1
+    return 2
+
+
 @router.get("/clubs")
 def browse_clubs(
     search: str = Query(default=""),
@@ -39,6 +55,8 @@ def browse_clubs(
             or search in (c.get("description") or "").lower()
             or search in (c.get("category") or "").lower()
         ]
+        # Stable sort: same-priority matches keep their original relative order.
+        clubs.sort(key=lambda c: _search_priority(c, search))
 
     total = len(clubs)
     start = (page - 1) * PAGE_SIZE
