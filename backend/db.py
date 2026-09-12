@@ -24,6 +24,11 @@ storage grows faster than saved_clubs does; acceptable at this app's
 local-SQLite scale, same risk tolerance already accepted for the
 saved_clubs SQLite-over-JSON deviation above - worth revisiting with a
 cleanup/expiry policy if that ever changes.
+
+google_calendar_tokens stores one row per user (user_id is the primary
+key, not a separate id) - a student connects at most one Google account
+for Calendar. See services/calendar_sync.py for the OAuth flow that
+populates/refreshes it; this module just stores whatever it's handed.
 """
 
 from __future__ import annotations
@@ -69,6 +74,13 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+
+CREATE TABLE IF NOT EXISTS google_calendar_tokens (
+    user_id       INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at    TEXT NOT NULL
+);
 """
 
 # Sign-up via Google has no password to hash. This fixed sentinel is stored
@@ -266,6 +278,47 @@ def get_saved_chat(user_id: int, chat_id: int) -> dict | None:
             (user_id, chat_id),
         ).fetchone()
         return dict(row) if row else None
+
+
+def upsert_google_calendar_tokens(
+    user_id: int, access_token: str, refresh_token: str, expires_at: str
+) -> None:
+    """Insert or overwrite this user's stored Calendar OAuth tokens - called
+    both right after the initial connect and after every access-token
+    refresh. Google's refresh response often omits a new refresh_token
+    (the existing one is still valid); it's the caller's job (see
+    services/calendar_sync.py) to pass through the existing refresh_token
+    unchanged in that case rather than overwrite it with a blank value -
+    this function just stores whatever it's given verbatim."""
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO google_calendar_tokens (user_id, access_token, refresh_token, expires_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                access_token = excluded.access_token,
+                refresh_token = excluded.refresh_token,
+                expires_at = excluded.expires_at
+            """,
+            (user_id, access_token, refresh_token, expires_at),
+        )
+
+
+def get_google_calendar_tokens(user_id: int) -> dict | None:
+    """Returns {"user_id", "access_token", "refresh_token", "expires_at"},
+    or None if this user has never connected Google Calendar."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM google_calendar_tokens WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def delete_google_calendar_tokens(user_id: int) -> None:
+    """No route calls this yet (no "disconnect" UI) - included for CRUD
+    symmetry with the rest of this module, ready for that later."""
+    with _connect() as conn:
+        conn.execute("DELETE FROM google_calendar_tokens WHERE user_id = ?", (user_id,))
 
 
 if __name__ == "__main__":

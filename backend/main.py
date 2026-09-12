@@ -17,9 +17,13 @@ SQLite db, and includes the routers.
   (requires auth). See services/saved_chats.py.
 - /research — per-club deadline/meeting/coffee-chat lookup, called only
   when explicitly requested (never automatic from any of the above).
+- /calendar/* — connect a Google Calendar account and add confirmed
+  events to it (status/connect/add-events require auth; oauth/callback is
+  a public redirect target Google itself hits). See services/calendar_sync.py.
 
-No club ever gets researched, and nothing ever gets saved to an account,
-without an explicit user action - matching CLAUDE.md's hard constraints.
+No club ever gets researched, and nothing ever gets saved to an account or
+added to a calendar, without an explicit user action - matching CLAUDE.md's
+hard constraints.
 
 Run it:
     uvicorn backend.main:app --reload
@@ -34,6 +38,7 @@ from backend import db
 from backend.routes import (
     auth_routes,
     browse_routes,
+    calendar_routes,
     chat_routes,
     matching_routes,
     research_routes,
@@ -56,6 +61,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_routes.router)
+app.include_router(calendar_routes.router)
 app.include_router(research_routes.router)
 app.include_router(saved_clubs_routes.router)
 app.include_router(saved_chats_routes.router)

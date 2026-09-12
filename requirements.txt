@@ -9,9 +9,12 @@ fastapi
 uvicorn
 python-multipart  # required by FastAPI for Form(...)/UploadFile in POST /chat
 
-# Scraping (scraper/), and Firecrawl REST calls in research_agent.py (raw
+# Scraping (scraper/); Firecrawl REST calls in research_agent.py (raw
 # requests.post/get against api.firecrawl.dev — not the firecrawl-py SDK,
-# since its class/method names have changed across versions).
+# since its class/method names have changed across versions); and Google's
+# OAuth token endpoint + Calendar v3 REST API in calendar_sync.py (also raw
+# requests, not google-auth-oauthlib/google-api-python-client, for the same
+# reason).
 requests
 beautifulsoup4  # still used by scraper/scrape_campusgroups.py only
 
@@ -41,8 +44,14 @@ pyjwt
 # — no dependency needed there.
 google-auth
 
+# Date parsing for calendar_sync.py: turns a club's free-text deadline/
+# meeting/info-session string (e.g. "Thu, Sep 3, 11:59PM ET") into a
+# concrete datetime — best-effort only; returns None (never a fabricated
+# guess) for a range, multiple sessions, or genuinely vague text. Calendar
+# OAuth itself and the Calendar API calls use plain `requests` (already
+# listed above), not a Google client library — see calendar_sync.py's
+# module docstring for why.
+python-dateutil
+
 # Not pinned yet — versions are still settling. Pin with `pip freeze` once the
 # pipeline works end to end.
-#
-# Added at the step that needs them, not guessed at now:
-#   - Google Calendar client  -> Step 7 (calendar_sync.py)

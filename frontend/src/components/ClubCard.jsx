@@ -7,11 +7,21 @@
 // across the Chat results, Browse Clubs, and My Clubs sections - showScore
 // hides the match-score badge where it isn't meaningful (Browse, My Clubs).
 
-const EVENT_FIELDS = [
+// Exported so App.jsx can reuse the same key->label mapping when building
+// the POST /calendar/add-events payload, instead of duplicating this list.
+// info_session isn't here - like coffee_chat_link, a club can have more than
+// one, so it's list-valued and rendered/selected separately below (one
+// checkbox per session, keyed "info_session:<index>").
+export const EVENT_FIELDS = [
   { key: 'application_deadline', label: 'Application deadline' },
   { key: 'next_meeting', label: 'Next meeting' },
-  { key: 'info_session', label: 'Info session' },
 ]
+
+// Shared with App.jsx so it can label each split-out info-session checkbox
+// the same way this file renders it, without duplicating the numbering rule.
+export function infoSessionLabel(index, total) {
+  return total > 1 ? `Info session #${index + 1}` : 'Info session'
+}
 
 function ResearchPanel({ state, selections, onToggleSelection }) {
   if (state.loading) {
@@ -35,6 +45,11 @@ function ResearchPanel({ state, selections, onToggleSelection }) {
     ? result.coffee_chat_link
     : result.coffee_chat_link
       ? [result.coffee_chat_link] // tolerate a stale cached pre-migration string
+      : []
+  const infoSessions = Array.isArray(result.info_session)
+    ? result.info_session
+    : result.info_session
+      ? [result.info_session] // tolerate a stale cached pre-migration string
       : []
 
   if (result.not_found) {
@@ -61,6 +76,22 @@ function ResearchPanel({ state, selections, onToggleSelection }) {
           </span>
         </label>
       ))}
+      {infoSessions.map((session, i) => {
+        const fieldKey = `info_session:${i}`
+        const label = infoSessionLabel(i, infoSessions.length)
+        return (
+          <label key={fieldKey} className="event-checkbox">
+            <input
+              type="checkbox"
+              checked={!!selections[fieldKey]}
+              onChange={() => onToggleSelection(fieldKey)}
+            />
+            <span>
+              <strong>{label}:</strong> {session}
+            </span>
+          </label>
+        )
+      })}
       {coffeeChatLinks.map((link, i) => (
         <a
           key={link}
@@ -72,7 +103,7 @@ function ResearchPanel({ state, selections, onToggleSelection }) {
           ☕ Coffee chat sign-up{coffeeChatLinks.length > 1 ? ` #${i + 1}` : ''}
         </a>
       ))}
-      {foundEventFields.length === 0 && coffeeChatLinks.length === 0 && (
+      {foundEventFields.length === 0 && infoSessions.length === 0 && coffeeChatLinks.length === 0 && (
         <p className="research-status">No concrete details found.</p>
       )}
     </div>

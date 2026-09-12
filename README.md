@@ -1,151 +1,115 @@
 # Cornell Club Matching Agent
 
-## 👋 Directions for us (read this first)
-
-### Quick glossary (skip if you already know this)
-- **This repo** = this folder. It's the shared project folder for the app.
-- **`.md` files** (like this one, `CLAUDE.md`, `BUILD_PROMPTS.md`) = plain
-  text files with some formatting. You don't need any special program —
-  open them in any text editor, or view them on GitHub where they look
-  nicely formatted automatically.
-- **Claude Code** = a terminal app where you type instructions in plain
-  English and it writes/edits code for you in this folder. You "open" it by
-  typing `claude` in your terminal while inside this repo's folder.
-- **`git pull` / `git push`** = downloading and uploading the latest version
-  of the project so you and your teammate stay in sync. See the loop below.
-
-### The workflow: we take turns, one person "has the ball" at a time
-
-**Step-by-step, every time it's your turn:**
-
-1. Open a terminal, navigate into the project folder, then run:
-   ```
-   git pull
-   ```
-   This downloads your teammate's latest work. Always do this first.
-
-2. Start Claude Code by typing:
-   ```
-   claude
-   ```
-   It will automatically read `CLAUDE.md` in this folder for project context —
-   you don't need to explain the project to it yourself.
-
-3. Open `BUILD_PROMPTS.md` in this repo (in any text editor, or on GitHub).
-   Find the step you're supposed to do (see "whose turn" below), and
-   **copy-paste that exact prompt** into Claude Code. Hit enter and let it work.
-
-4. Look at what it did. If something looks broken or you're not sure, come
-   back to this Claude conversation (the one that gave you these files) and
-   describe what happened — don't just keep guessing prompts at Claude Code.
-
-5. When the step is working, tell it done for now, then in your terminal run:
-   ```
-   git add .
-   git commit -m "short description of what you did"
-   git push
-   ```
-   Replace the text in quotes with a real description, e.g.
-   `"finished scraper, clubs.json has real data"`.
-
-6. Open `CLAUDE.md`, find the **"Current status"** line near the bottom, and
-   update it to reflect what's now done. Save, then run the `git add` /
-   `commit` / `push` commands above again so that update gets shared too.
-
-7. Text/message your teammate: **"pushed, your turn — do Step [X]."**
-
-8. Your teammate now does steps 1-7 themselves, starting with `git pull`.
-
-### Whose turn is it right now
-_(update this line every handoff so it's never ambiguous)_
-> Currently: a big post-Step-6 feature pass landed 2026-09-06 on top of the
-> working app: real user accounts (SQLite, JWT login), the old single
-> search box replaced by a multi-turn conversational profile-builder that
-> can take a resume attachment mid-conversation, a real matching bug fixed
-> (a multi-topic resume query was silently drowning out minority interests
-> like robotics in favor of whatever topic dominated the phrase list),
-> results now grouped into Professional/Social & Fun/Community Service, a
-> "Browse Clubs" directory with search/filter, a "My Clubs" saved-clubs
-> section, loading spinners/progress bars throughout, and a full visual
-> redesign to a flatter "clean modern app" look (the earlier pinboard/tilt
-> concept is retired). All driven end-to-end with a live backend + browser
-> automation, not just eyeballed. See CLAUDE.md's "Current status" for the
-> full breakdown.
-> **Next step:** Step 7 (the last one) — Google Calendar OAuth
-> (backend/services/calendar_sync.py + POST /calendar/add-events). Needs
-> manual Google Cloud Console setup that can't be automated — see
-> BUILD_PROMPTS.md's Step 7 prompt. To run the app locally: backend
-> (`uvicorn backend.main:app --reload`, needs `JWT_SECRET_KEY` and
-> `FIRECRAWL_API_KEY` set in `.env` — see `.env.example`) and frontend
-> (`cd frontend && npm install && npm run dev`) both running at the same
-> time.
-
-### Rules
-- **Only one of us works in the repo at a time.** If it's not your turn,
-  don't run Claude Code prompts yet — wait for the "pushed, your turn" message.
-- **Never commit `.env`** (it holds API keys). It should already be listed in
-  a file called `.gitignore` so git skips it automatically — don't remove it
-  from there.
-- **Never paste your real API key into a message to Claude Code or into
-  chat** — it goes in the `.env` file only.
-- If `git pull` or `git push` gives an error you don't understand, **stop**
-  and bring it back to this conversation before running more commands.
-
----
-
-## What this project is
-
 A chatbot that helps Cornell students find student organizations. The
-student chats and/or uploads their resume. The system matches them to
-relevant clubs from Cornell's real CampusGroups directory, researches each
-matched club's website for deadlines/meetings/coffee chats, shows the
-student what it found, and — only after the student approves — adds the
-relevant events to their Google Calendar.
+student chats and/or uploads their resume; the app matches them to real
+clubs from Cornell's CampusGroups directory, researches each matched
+club's website for application deadlines, info sessions, and coffee chat
+sign-ups, shows the student what it found, and — only after the student
+approves — adds the relevant events to their Google Calendar.
 
 Built for the Generative AI @ Cornell developer application.
 
 ## Tech stack
 
 - **Backend:** Python, FastAPI
-- **LLM:** Anthropic Claude API
-- **Embeddings:** lightweight model, cached locally (no hosted vector DB)
-- **Frontend:** React
+- **LLM:** Anthropic Claude API (resume parsing, club-site research
+  extraction, conversational profile-building)
+- **Embeddings:** `sentence-transformers` (local, no hosted vector DB),
+  cached to `data/embeddings.npy`
+- **Web crawling:** Firecrawl API (club-site research)
+- **Frontend:** React (Vite)
+- **Accounts:** SQLite (`data/app.db`) + stateless JWT login
 - **Calendar:** Google Calendar API (OAuth2)
-- **Data:** scraped JSON files in `/data`
 
 ## Project structure
 
 ```
-club-agent/
-  scraper/              # scrapes CampusGroups directory -> data/clubs.json
-  data/                 # clubs.json, embeddings.npy, cache files
+GenAI/
+  scraper/              # scrapes CampusGroups -> data/clubs.json
+  data/                  # clubs.json, clubs_filtered.json, embeddings,
+                          # app.db, cache files (mostly gitignored/derived)
   backend/
-    routes/             # FastAPI route handlers
-    services/
-      matching.py        # embedding search + re-ranking
-      resume_parser.py    # PDF -> structured profile
-      research_agent.py   # fetch club site -> extract structured info
-      calendar_sync.py    # Google Calendar OAuth + event creation
-  frontend/              # React app
+    main.py                # FastAPI app, route wiring
+    db.py                   # SQLite schema + raw CRUD
+    routes/                 # one module per API concern (auth, chat,
+                             # matching, research, calendar, browse, ...)
+    services/                # matching, resume parsing, club research,
+                              # chat profile-building, accounts, calendar
+                              # sync, etc.
+  frontend/               # React app (Chat / Browse Clubs / My Clubs)
   .env.example
-  CLAUDE.md              # project context for Claude Code
-  BUILD_PROMPTS.md       # ordered prompts to build each piece
-  README.md              # this file
+  requirements.txt
 ```
 
 ## Setup
 
-1. Clone the repo, `cd` into it.
-2. Copy `.env.example` to `.env` and fill in your own API keys (never commit
-   this file).
-3. Backend: create a virtual environment and `pip install -r requirements.txt`.
-4. Frontend: `cd frontend && npm install`.
-5. See `BUILD_PROMPTS.md` for the build sequence if setting up from scratch.
+### 1. Configure environment variables
 
-## Key files for working with Claude Code
+```
+cp .env.example .env
+```
 
-- **`CLAUDE.md`** — project context, tech stack decisions, and hard
-  constraints. Claude Code reads this automatically at the start of every
-  session. Keep the "Current status" section updated.
-- **`BUILD_PROMPTS.md`** — the exact prompts to paste into Claude Code, in
-  build order, from initial skeleton through calendar integration.
+Then fill in `.env` with real values. At minimum, to run the app locally:
+
+| Variable | What it's for |
+|---|---|
+| `ANTHROPIC_API_KEY` | Resume parsing, club-site research extraction, chat |
+| `FIRECRAWL_API_KEY` | Crawling club websites in `research_agent.py` |
+| `JWT_SECRET_KEY` | Signs account login tokens — any random value works locally, e.g. `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Sign-In and Calendar OAuth (see below) |
+| `SMTP_*` | Sending password-reset emails |
+| `FRONTEND_BASE_URL` / `BACKEND_BASE_URL` | Default to `localhost:3000` / `localhost:8000` — fine for local dev |
+
+See the comments in [.env.example](.env.example) for exact details on each
+variable, including the Google OAuth client requirements.
+
+### 2. Backend
+
+```
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn backend.main:app --reload
+```
+
+Runs at `http://localhost:8000`.
+
+`data/clubs.json` and `data/clubs_filtered.json` are already committed, so
+there's no need to re-scrape to get started. To refresh club data from
+Cornell's live CampusGroups directory, run `scraper/scrape_campusgroups.py`
+(optional).
+
+### 3. Frontend
+
+```
+cd frontend
+npm install
+npm run dev
+```
+
+Runs at `http://localhost:3000` (fixed in `vite.config.js` to match the
+backend's CORS allowlist).
+
+Both the backend and frontend need to be running at the same time.
+
+### 4. Google Calendar OAuth — one-time manual setup
+
+Adding events to Google Calendar requires a one-time setup in Google Cloud
+Console for the OAuth client referenced by `GOOGLE_CLIENT_ID`/
+`GOOGLE_CLIENT_SECRET` (the same "Web application" client used for Google
+Sign-In):
+
+1. **APIs & Services → Library** — enable the **Google Calendar API**.
+2. **APIs & Services → Credentials** — open the existing Web application
+   OAuth client → **Authorized redirect URIs** → add
+   `http://localhost:8000/calendar/oauth/callback` exactly (must match
+   `BACKEND_BASE_URL` + `/calendar/oauth/callback`, no trailing slash).
+3. **APIs & Services → OAuth consent screen → Scopes** — add
+   `.../auth/calendar.events`.
+4. If the consent screen is still in **Testing** status, add the Google
+   accounts you'll test with under "Test users," or consent will fail with
+   "access blocked" (an "unverified app" warning during consent is
+   expected in Testing mode — click through it).
+
+Everything else (accounts, chat, matching, browsing clubs, saving clubs,
+researching a club's deadlines/info sessions) works without this step;
+it's only needed for the final "Add to Google Calendar" action.

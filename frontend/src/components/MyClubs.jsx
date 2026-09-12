@@ -76,7 +76,7 @@ export default function MyClubs({
               researchState={research[club.website_url]}
               selections={selections[club.website_url] || {}}
               onGetInfo={() => onGetInfo(club.website_url)}
-              onToggleSelection={(fieldKey) => onToggleSelection(club.website_url, fieldKey)}
+              onToggleSelection={(fieldKey) => onToggleSelection(club.website_url, fieldKey, club.name)}
               saved
               onToggleSave={() => onToggleSave(club.website_url)}
             />

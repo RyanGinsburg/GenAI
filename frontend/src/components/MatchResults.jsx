@@ -80,7 +80,7 @@ export default function MatchResults({ groups, profile, research, selections, on
                 researchState={research[club.website_url]}
                 selections={selections[club.website_url] || {}}
                 onGetInfo={() => onGetInfo(club.website_url)}
-                onToggleSelection={(fieldKey) => onToggleSelection(club.website_url, fieldKey)}
+                onToggleSelection={(fieldKey) => onToggleSelection(club.website_url, fieldKey, club.name)}
                 saved={savedUrls.has(club.website_url)}
                 onToggleSave={() => onToggleSave(club.website_url)}
               />

@@ -91,11 +91,14 @@ MAX_COMBINED_CHARS = 60000  # replaces the old per-page MAX_PAGE_CHARS=25000;
 MODEL = "claude-sonnet-5"
 
 RESULT_FIELDS = ("application_deadline", "next_meeting", "info_session", "coffee_chat_link")
-# coffee_chat_link is list-valued (see SYSTEM_PROMPT); every other field is a
-# scalar string-or-null. _FIELD_DEFAULTS/_empty_result() and research_club()'s
-# not_found check both need to treat that field's "nothing found" value as
-# [] rather than None.
-_FIELD_DEFAULTS = {f: ([] if f == "coffee_chat_link" else None) for f in RESULT_FIELDS}
+# coffee_chat_link and info_session are list-valued (see SYSTEM_PROMPT) -
+# info_session because a club can hold more than one session (e.g. two
+# different dates), same reasoning as coffee_chat_link's per-subteam links.
+# Every other field is a scalar string-or-null. _FIELD_DEFAULTS/
+# _empty_result() and research_club()'s not_found check both need to treat
+# a list field's "nothing found" value as [] rather than None.
+_LIST_FIELDS = {"coffee_chat_link", "info_session"}
+_FIELD_DEFAULTS = {f: ([] if f in _LIST_FIELDS else None) for f in RESULT_FIELDS}
 
 SYSTEM_PROMPT = """You extract recruiting/event details from a student club's website text.
 
@@ -104,7 +107,12 @@ website. Return ONLY a single JSON object (no markdown fences, no commentary) wi
 exactly these keys:
 - "application_deadline": string or null - a stated deadline to apply/join
 - "next_meeting": string or null - a stated date/time for the next general meeting
-- "info_session": string or null - a stated date/time for an info session
+- "info_session": array of strings - each string describing ONE info session with
+  its own single date/time (e.g. "August 27, 5:30-7:00pm"). Use an empty array []
+  if none are stated. Some clubs hold multiple info sessions - if that's the case,
+  return each one as its own separate array entry rather than combining them into
+  one string (do NOT return something like "Session 1: Aug 27 ...; Session 2:
+  Sept 1 ..." as a single string - split it into two array entries instead).
 - "coffee_chat_link": array of strings - URL(s)/contact(s) for booking a coffee chat.
   Use an empty array [] if none are stated. Some clubs have multiple sub-teams or
   committees, each with its own coffee chat sign-up link (e.g. a separate link for
@@ -127,10 +135,10 @@ Rules:
   - collect the URL into coffee_chat_link whenever the surrounding link text/context
   indicates it's for booking a coffee chat. A page can legitimately have more than one
   such link (e.g. one per sub-team) - collect every one you find, not just the first.
-- If application_deadline, next_meeting, or info_session isn't present in the text, use
-  null for that field. If no coffee chat link is present anywhere, use an empty array
-  []. It is normal and expected for most or all fields to come back empty - most club
-  websites don't list this information.
+- If application_deadline or next_meeting isn't present in the text, use null for that
+  field. If no info session or coffee chat link is present anywhere, use an empty
+  array [] for that field. It is normal and expected for most or all fields to come
+  back empty - most club websites don't list this information.
 - Output must be valid JSON and nothing else.
 """
 
@@ -288,8 +296,9 @@ def _page_markdown(page: dict) -> str:
 
 def research_club(website_url: str) -> dict:
     """Research one club's website. Returns a dict with website_url,
-    application_deadline, next_meeting, info_session, coffee_chat_link
-    (a list), and not_found (true iff every field above is empty). Never
+    application_deadline, next_meeting, info_session (a list, one entry per
+    distinct session), coffee_chat_link (a list), and not_found (true iff
+    every field above is empty). Never
     raises - any failure (unreachable site, crawl timeout, bad API
     response) comes back as not_found with an "error" key describing what
     went wrong.
@@ -339,15 +348,16 @@ def research_club(website_url: str) -> dict:
         return _empty_result(website_url, error=f"Model did not return valid JSON: {response_text[:300]!r}")
 
     fields = {f: extracted.get(f) for f in RESULT_FIELDS}
-    if fields["coffee_chat_link"] is None:
-        fields["coffee_chat_link"] = []
-    elif isinstance(fields["coffee_chat_link"], str):
-        # Defensive: tolerate the model returning a bare string despite the
-        # schema instruction, rather than dropping a real link.
-        fields["coffee_chat_link"] = [fields["coffee_chat_link"]]
+    for f in _LIST_FIELDS:
+        if fields[f] is None:
+            fields[f] = []
+        elif isinstance(fields[f], str):
+            # Defensive: tolerate the model returning a bare string despite
+            # the schema instruction, rather than dropping a real value.
+            fields[f] = [fields[f]]
 
     not_found = all(
-        fields[f] == [] if f == "coffee_chat_link" else fields[f] is None
+        fields[f] == [] if f in _LIST_FIELDS else fields[f] is None
         for f in RESULT_FIELDS
     )
 

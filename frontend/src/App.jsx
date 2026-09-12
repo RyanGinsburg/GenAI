@@ -8,7 +8,16 @@ import ChatSection from './components/ChatSection'
 import BrowseClubs from './components/BrowseClubs'
 import MyClubs from './components/MyClubs'
 import CalendarBar from './components/CalendarBar'
-import { getSavedClubs, postResearch, saveClub, unsaveClub } from './api'
+import { EVENT_FIELDS, infoSessionLabel } from './components/ClubCard'
+import {
+  addEventsToCalendar,
+  getCalendarConnectUrl,
+  getCalendarStatus,
+  getSavedClubs,
+  postResearch,
+  saveClub,
+  unsaveClub,
+} from './api'
 
 export default function App() {
   const [user, setUser] = useState(() => {
@@ -53,7 +62,15 @@ export default function App() {
   // Shared across Chat/Browse/My Clubs since ClubCard is reused everywhere.
   const [research, setResearch] = useState({})
   const [selections, setSelections] = useState({})
+  // selections/research are keyed by website_url only - neither carries a
+  // club's display name, which a calendar event's summary needs. This is a
+  // parallel lookup populated alongside selections (see
+  // handleToggleSelection) rather than restructuring either of those two
+  // states, which are consumed as-is across Chat/Browse/My Clubs.
+  const [clubNames, setClubNames] = useState({})
   const [calendarStatus, setCalendarStatus] = useState(null)
+  const [calendarConnected, setCalendarConnected] = useState(false)
+  const [calendarResults, setCalendarResults] = useState(null)
 
   useEffect(() => {
     if (!token) return
@@ -63,8 +80,49 @@ export default function App() {
         // Token expired/invalid - clear it quietly rather than looping errors.
         handleLogout()
       })
+    getCalendarStatus(token)
+      .then((data) => setCalendarConnected(data.connected))
+      .catch(() => setCalendarConnected(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  // A Google Calendar OAuth redirect lands here as ?calendarConnected=true|
+  // false - same "no client-side router, read straight off the URL" pattern
+  // as resetToken above. Unlike resetToken there's no modal to wait on: the
+  // whole connect flow already completed server-side by the time this page
+  // reloads, so the query param is cleared immediately and this just reports
+  // the outcome.
+  useEffect(() => {
+    const flag = new URLSearchParams(window.location.search).get('calendarConnected')
+    if (!flag) return
+    window.history.replaceState({}, '', window.location.pathname)
+    if (flag === 'true') {
+      setCalendarConnected(true)
+      setCalendarStatus('Google Calendar connected!')
+    } else {
+      setCalendarStatus("Couldn't connect Google Calendar. Please try again.")
+    }
+  }, [])
+
+  // Neither calendarStatus (e.g. "Google Calendar connected!") nor
+  // calendarResults (the per-event added/skipped/failed list) used to clear
+  // themselves, so CalendarBar stayed pinned at the bottom of every page
+  // indefinitely - even showing "0 events selected" once a successful add
+  // reset `selections`. Auto-dismiss either one a few seconds after it's
+  // set; handleDismissCalendarNotice below covers the earlier manual case.
+  useEffect(() => {
+    if (!calendarStatus && !calendarResults) return
+    const timer = setTimeout(() => {
+      setCalendarStatus(null)
+      setCalendarResults(null)
+    }, 6000)
+    return () => clearTimeout(timer)
+  }, [calendarStatus, calendarResults])
+
+  function handleDismissCalendarNotice() {
+    setCalendarStatus(null)
+    setCalendarResults(null)
+  }
 
   function handleAuthSuccess(newUser, newToken) {
     setUser(newUser)
@@ -107,7 +165,7 @@ export default function App() {
     }
   }
 
-  function handleToggleSelection(websiteUrl, fieldKey) {
+  function handleToggleSelection(websiteUrl, fieldKey, clubName) {
     setSelections((prev) => ({
       ...prev,
       [websiteUrl]: {
@@ -115,6 +173,9 @@ export default function App() {
         [fieldKey]: !prev[websiteUrl]?.[fieldKey],
       },
     }))
+    if (clubName) {
+      setClubNames((prev) => ({ ...prev, [websiteUrl]: clubName }))
+    }
   }
 
   const selectedCount = Object.values(selections).reduce(
@@ -122,14 +183,75 @@ export default function App() {
     0,
   )
 
-  function handleAddToCalendar() {
-    // Stub - Step 7 wires this to real Google Calendar OAuth + event
-    // creation. For now this just confirms the selection flow works.
-    setCalendarStatus(
-      `Google Calendar isn't connected yet. ${selectedCount} event${
-        selectedCount === 1 ? '' : 's'
-      } would have been added.`,
-    )
+  async function handleAddToCalendar() {
+    if (!token) {
+      setAuthModalOpen(true)
+      return
+    }
+
+    if (!calendarConnected) {
+      // One-time connect step - a real browser redirect, so this can't
+      // carry the Authorization header itself. getCalendarConnectUrl()
+      // does the authenticated part (proving who's connecting) via
+      // fetch() first; window.location.href is a plain, header-less
+      // navigation to the URL that call returns.
+      try {
+        const { authorization_url: authorizationUrl } = await getCalendarConnectUrl(token)
+        window.location.href = authorizationUrl
+      } catch (err) {
+        setCalendarStatus(err.message)
+      }
+      return
+    }
+
+    const events = []
+    for (const [websiteUrl, fields] of Object.entries(selections)) {
+      for (const [fieldKey, checked] of Object.entries(fields)) {
+        if (!checked) continue
+        const result = research[websiteUrl]?.result
+
+        // info_session is list-valued (a club can hold more than one
+        // session) - ClubCard renders one checkbox per entry keyed
+        // "info_session:<index>" instead of the flat EVENT_FIELDS mapping.
+        const infoSessionMatch = /^info_session:(\d+)$/.exec(fieldKey)
+        let rawText
+        let fieldLabel
+        if (infoSessionMatch) {
+          const index = Number(infoSessionMatch[1])
+          const sessions = result?.info_session
+          rawText = Array.isArray(sessions) ? sessions[index] : undefined
+          fieldLabel = infoSessionLabel(index, Array.isArray(sessions) ? sessions.length : 1)
+        } else {
+          rawText = result?.[fieldKey]
+          fieldLabel = EVENT_FIELDS.find((f) => f.key === fieldKey)?.label || fieldKey
+        }
+        if (!rawText) continue // shouldn't happen - a checkbox only exists for a found field
+
+        events.push({
+          website_url: websiteUrl,
+          club_name: clubNames[websiteUrl] || websiteUrl,
+          field_key: fieldKey,
+          field_label: fieldLabel,
+          raw_text: rawText,
+        })
+      }
+    }
+
+    try {
+      const data = await addEventsToCalendar(token, events)
+      if (data.notConnected) {
+        // Status went stale since the last check (e.g. access was
+        // revoked mid-session) - fall back to the connect flow again.
+        setCalendarConnected(false)
+        setCalendarStatus('Google Calendar needs to be reconnected.')
+        return
+      }
+      setCalendarResults(data.results)
+      setCalendarStatus(null)
+      setSelections({}) // clear checkboxes so a re-click doesn't re-add the same events
+    } catch (err) {
+      setCalendarStatus(err.message)
+    }
   }
 
   const sharedCardProps = {
@@ -170,6 +292,9 @@ export default function App() {
             selectedCount={selectedCount}
             onAddToCalendar={handleAddToCalendar}
             statusMessage={calendarStatus}
+            connected={calendarConnected}
+            results={calendarResults}
+            onDismiss={handleDismissCalendarNotice}
           />
         </>
       ) : (

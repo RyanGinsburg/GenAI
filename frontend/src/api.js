@@ -186,3 +186,30 @@ export async function aiSearchClubs({ q, category = 'All', topK = 24 } = {}) {
   const res = await fetch(`${API_BASE}/clubs/ai-search?${params}`)
   return asJson(res, 'AI search')
 }
+
+// --- Google Calendar ---
+
+export async function getCalendarStatus(token) {
+  const res = await fetch(`${API_BASE}/calendar/status`, { headers: authHeaders(token) })
+  return asJson(res, 'Checking calendar connection')
+}
+
+export async function getCalendarConnectUrl(token) {
+  const res = await fetch(`${API_BASE}/calendar/connect`, { headers: authHeaders(token) })
+  return asJson(res, 'Connecting to Google Calendar')
+}
+
+// A 409 means "not connected" - a UI branch App.jsx needs to act on (start
+// the connect flow), not a generic error to just display, so it's handled
+// here rather than left to asJson's one-size-fits-all Error throw.
+export async function addEventsToCalendar(token, events) {
+  const res = await fetch(`${API_BASE}/calendar/add-events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ events }),
+  })
+  if (res.status === 409) {
+    return { notConnected: true }
+  }
+  return asJson(res, 'Adding to calendar')
+}
