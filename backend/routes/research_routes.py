@@ -48,7 +48,7 @@ def research(req: ResearchRequest):
                 "application_deadline": None,
                 "next_meeting": None,
                 "info_session": None,
-                "coffee_chat_link": None,
+                "coffee_chat_link": [],
                 "not_found": True,
                 "error": f"Unexpected error researching this club: {e}",
             }

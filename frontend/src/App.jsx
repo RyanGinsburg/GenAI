@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import './App.css'
 import NavBar from './components/NavBar'
 import AuthModal from './components/AuthModal'
+import ResetPasswordModal from './components/ResetPasswordModal'
+import LandingPage from './components/LandingPage'
 import ChatSection from './components/ChatSection'
 import BrowseClubs from './components/BrowseClubs'
 import MyClubs from './components/MyClubs'
@@ -14,9 +16,39 @@ export default function App() {
     return stored ? JSON.parse(stored) : null
   })
   const [token, setToken] = useState(() => localStorage.getItem('ccma_token'))
-  const [activeSection, setActiveSection] = useState('chat')
+  const [activeSection, setActiveSection] = useState('browse')
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [authModalMode, setAuthModalMode] = useState('login')
   const [savedUrls, setSavedUrls] = useState(new Set())
+
+  // Landing page: shown before the main app whenever there's no stored
+  // token. Intentionally simple - a guest sees it again on every fresh
+  // page load (no separate "already chose guest" flag); only a stored
+  // token skips it automatically.
+  const [hasEnteredApp, setHasEnteredApp] = useState(() => !!localStorage.getItem('ccma_token'))
+
+  function openAuthModal(mode) {
+    setAuthModalMode(mode)
+    setAuthModalOpen(true)
+  }
+
+  // A password-reset email link lands here as ?resetToken=... - there's no
+  // router, so this is read straight off the URL on mount, same "modal,
+  // not a route" pattern as authModalOpen. Cleared only on the modal's
+  // success/close (not immediately on open) so a page refresh mid-flow
+  // re-derives it from the still-present URL param instead of stranding
+  // the user.
+  const [resetToken, setResetToken] = useState(null)
+
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('resetToken')
+    if (fromUrl) setResetToken(fromUrl)
+  }, [])
+
+  function clearResetToken() {
+    setResetToken(null)
+    window.history.replaceState({}, '', window.location.pathname)
+  }
 
   // Shared across Chat/Browse/My Clubs since ClubCard is reused everywhere.
   const [research, setResearch] = useState({})
@@ -40,6 +72,7 @@ export default function App() {
     localStorage.setItem('ccma_user', JSON.stringify(newUser))
     localStorage.setItem('ccma_token', newToken)
     setAuthModalOpen(false)
+    setHasEnteredApp(true)
   }
 
   function handleLogout() {
@@ -110,31 +143,61 @@ export default function App() {
 
   return (
     <div className="app">
-      <NavBar
-        activeSection={activeSection}
-        onSectionChange={setActiveSection}
-        user={user}
-        onLoginClick={() => setAuthModalOpen(true)}
-        onLogout={handleLogout}
-      />
+      {hasEnteredApp ? (
+        <>
+          <NavBar
+            activeSection={activeSection}
+            onSectionChange={setActiveSection}
+            user={user}
+            onLoginClick={() => openAuthModal('login')}
+            onLogout={handleLogout}
+            onTitleClick={() => setActiveSection('browse')}
+          />
 
-      <main className="app__main">
-        {activeSection === 'chat' && <ChatSection {...sharedCardProps} />}
-        {activeSection === 'browse' && <BrowseClubs {...sharedCardProps} />}
-        {activeSection === 'my-clubs' && (
-          <MyClubs token={token} onRequireLogin={() => setAuthModalOpen(true)} {...sharedCardProps} />
-        )}
-      </main>
+          <main className="app__main">
+            {activeSection === 'chat' && (
+              <ChatSection token={token} onRequireLogin={() => openAuthModal('login')} {...sharedCardProps} />
+            )}
+            {activeSection === 'browse' && (
+              <BrowseClubs onGoToChat={() => setActiveSection('chat')} {...sharedCardProps} />
+            )}
+            {activeSection === 'my-clubs' && (
+              <MyClubs token={token} onRequireLogin={() => openAuthModal('login')} {...sharedCardProps} />
+            )}
+          </main>
 
-      {authModalOpen && (
-        <AuthModal onClose={() => setAuthModalOpen(false)} onAuthSuccess={handleAuthSuccess} />
+          <CalendarBar
+            selectedCount={selectedCount}
+            onAddToCalendar={handleAddToCalendar}
+            statusMessage={calendarStatus}
+          />
+        </>
+      ) : (
+        <LandingPage
+          onContinueAsGuest={() => setHasEnteredApp(true)}
+          onLoginClick={() => openAuthModal('login')}
+          onCreateAccountClick={() => openAuthModal('register')}
+        />
       )}
 
-      <CalendarBar
-        selectedCount={selectedCount}
-        onAddToCalendar={handleAddToCalendar}
-        statusMessage={calendarStatus}
-      />
+      {authModalOpen && (
+        <AuthModal
+          initialMode={authModalMode}
+          onClose={() => setAuthModalOpen(false)}
+          onAuthSuccess={handleAuthSuccess}
+        />
+      )}
+
+      {resetToken && (
+        <ResetPasswordModal
+          token={resetToken}
+          onSuccess={(newUser, newToken) => {
+            handleAuthSuccess(newUser, newToken)
+            clearResetToken()
+          }}
+          onClose={clearResetToken}
+        />
+      )}
     </div>
   )
 }

@@ -71,13 +71,118 @@ club-agent/
 ## Current status
 
 **Immediate next step (do this first if asked "what needs to be done"):**
-A pass on 2026-09-07 expanded the chat profile schema and made matching
-category-aware/diversified, plus added conversational refine after
-results - see the dated section below for full detail. The only step from
-BUILD_PROMPTS.md still open is **Step 7: Google Calendar OAuth**
+A pass on 2026-09-11 replaced research_agent.py's Playwright fetch with
+Firecrawl - see the dated section below for full detail. The only step
+from BUILD_PROMPTS.md still open is **Step 7: Google Calendar OAuth**
 (backend/services/calendar_sync.py + a POST /calendar/add-events route).
 Needs manual Google Cloud Console setup (OAuth credentials) that can't be
 automated.
+
+**2026-09-11: replaced Playwright with Firecrawl for research_agent.py's
+page fetching, widened to a multi-page keyword-biased crawl, and
+coffee_chat_link is now a list.** research_club() previously drove a
+locally-launched headless Chromium via Playwright to fetch just the
+primary page plus one hand-picked "secondary" link
+(SECONDARY_LINK_KEYWORDS priority match, max 2 pages total). It now calls
+the Firecrawl REST API directly (plain `requests.post`/`get` against
+`api.firecrawl.dev/v2` - deliberately not the `firecrawl-py` SDK, whose
+class/method names have moved across versions even in current docs,
+`FirecrawlApp.crawl_url` -> `Firecrawl.crawl`) with `crawlEntireDomain:
+true` and `limit: 8`, so it crawls up to 8 same-domain pages per site
+(`POST /v2/crawl` to start, poll `GET .../crawl/{id}` every 3s up to a
+120s wall-clock budget) instead of exactly 1-2. Firecrawl's own link
+discovery has no notion of "this looks like a recruiting page," so an
+`includePaths` keyword bias (`apply`/`recruit`/`join`/`event`/`contact` -
+the same list `_find_secondary_url()` used to prioritize) was added to
+stop team-bio/blog-heavy sites from crowding out the one page that
+matters within the 8-page budget - see `_build_include_paths()`. Each
+returned page's markdown is combined the same way as before
+(`--- Page: {url} ---\n{text}` blocks joined by blank lines), now
+truncated as one combined string at `MAX_COMBINED_CHARS = 60000` (renamed
+from the old per-page `MAX_PAGE_CHARS = 25000`, which no longer made sense
+once page count is variable) rather than truncating each page
+individually - checked against real crawls: AppDev's real 8-page,
+apply/interview-guide-heavy crawl came in at 50,068/60,000 chars (83%),
+comfortably under the cap with real headroom to spare. Also changed
+`coffee_chat_link` from a single string-or-null to an array of strings
+(empty array, not null, when none is found) so clubs with multiple
+legitimate per-subteam coffee chat links (the AppDev-style case) aren't
+forced down to just one - `SYSTEM_PROMPT`, `not_found`'s all-fields-empty
+check, `_empty_result()`'s default, `ClubCard.jsx`'s rendering (now maps
+over the array, numbering "#1"/"#2" when there's more than one, and fixes
+a pre-existing `![]` truthiness bug in the "no details found" condition
+that silently never fired for an empty array even before this change),
+`qa/research_agent_review.py`'s display column, and
+`research_routes.py`'s exception-fallback dict were all updated to match.
+
+**`temperature=0` was requested but is not implementable on
+`claude-sonnet-5`.** Confirmed live (a bare `temperature=0` call raised
+`TypeError: Messages.create() got an unexpected keyword argument
+'temperature'`): Anthropic has removed `temperature`/`top_p`/`top_k`
+entirely from the current model generation (Sonnet 5, Opus 5, and others)
+- there is no sampling-determinism knob left to set for this model.
+Dropped; the extraction call is unchanged from before (temperature was
+never set either way).
+
+**Firecrawl's API enforces a 3 requests/minute rate limit on this
+account** (confirmed live via rapid-fire test calls; no `Retry-After`
+header, only a `"...please retry after 22s..."` string inside the JSON
+error body). `POST /research` loops over a list of `website_urls`
+back-to-back with no delay between them, so without handling this, a
+multi-club batch would fail almost entirely (confirmed: an initial
+20-club test run got only 2/20 through before every remaining call came
+back 429). Added bounded retry-with-backoff: `_firecrawl_start()` retries
+up to `FIRECRAWL_MAX_START_RETRIES = 2` times on a 429, and
+`_firecrawl_poll()` treats a 429 as "keep waiting" within its existing
+poll deadline rather than failing outright - both parse the "retry after
+Ns" hint out of the error body (`_retry_after_seconds()`), falling back to
+`FIRECRAWL_DEFAULT_RETRY_SECONDS = 20` if it can't be parsed.
+
+**Verification** (spot-check, not a full 20-club re-run, given the 3
+req/min limit above - the specific known quirks plus a few general
+checks):
+- **AppDev at Cornell: genuinely fixed.** `coffee_chat_link` now returns
+  all 5 real per-subteam Calendly links (previously the single-string
+  field arbitrarily returned one, or none, run to run) - confirmed stable
+  across repeated runs, crawling 8 pages (homepage + `/apply` +
+  per-track interview guides).
+- **Cornell Business Analytics Club: the info_session run-to-run variance
+  is genuinely gone, but not because of temperature** (which couldn't be
+  set - see above). The real cause of the *old* variance no longer
+  applies: without `includePaths`, this club's crawl picked up several
+  `/team/<uuid>` bio sub-pages, `/clients`, and `/contact`, and never
+  reached its real `/recruitment` page at all (confirmed by fetching the
+  homepage directly - `/recruitment` is linked right in its nav). With
+  `includePaths` added, the crawl now reliably reaches exactly
+  `/`, `/contact`, `/recruitment` (3 pages, not 8) and 3 consecutive live
+  runs returned identical results: the same deadline, the same 2 real
+  info sessions, and the same coffee chat link every time.
+- **Blockchain at Cornell: can no longer be compared to the old quirk -
+  the site is fully gone.** `cornellblockchain.org` no longer resolves at
+  all (confirmed via `nslookup`: NXDOMAIN), so the 2026-09-05 "Apply Now
+  button has no static href even after JS rendering" finding can't be
+  re-tested; this is an unrelated, real-world domain-expiry fact, not a
+  research_agent.py issue.
+- **scl.cornell.edu/convocation: the 403/WAF block is gone.** The
+  2026-09-06 finding (403 to Playwright's headless Chromium specifically)
+  does not reproduce via Firecrawl, which crawls from its own
+  infrastructure rather than this machine's IP - 8 pages fetched
+  successfully with no error, genuinely `not_found` (this is a university
+  event page, not a club, so "no recruiting info" is the correct answer,
+  not a miss).
+- **Cornell Real Estate Club: a new, confirmed trade-off from
+  `includePaths`.** This club's real deadline/application/coffee-chat
+  content now lives at `/general-4` - a generic Wix-style auto-numbered
+  slug containing none of the `apply`/`recruit`/`join`/`event`/`contact`
+  keywords - confirmed live by fetching that page directly (it has real
+  "deadline"/"apply"/"application"/"coffee chat" text). Because its path
+  matches none of the keywords, `includePaths` never lets Firecrawl crawl
+  it, so this club now comes back `not_found`. Explicit product decision:
+  keep `includePaths` anyway, since it fixes the more common team-bio-
+  flooding failure mode (confirmed on Business Analytics Club) at the cost
+  of occasionally missing a keyword-less URL slug (confirmed only on this
+  one club of those checked) - there is no path-priority concept in
+  Firecrawl's API to get both, only include/exclude.
 
 **2026-09-07: richer chat profile, deterministic readiness/merge,
 diversified matching, conversational refine.** Expanded on the

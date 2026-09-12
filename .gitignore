@@ -29,3 +29,6 @@ data/resumes/*
 
 # macOS
 .DS_Store
+
+# Claude Code local session/tool state - machine-specific, not project source
+.claude/

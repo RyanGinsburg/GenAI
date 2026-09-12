@@ -13,6 +13,8 @@ SQLite db, and includes the routers.
   services/categorize.py.
 - /clubs — browse/search/filter the full club directory, no auth needed.
 - /clubs/saved — a logged-in user's saved clubs (requires auth).
+- /chats/saved — a logged-in user's saved chat/match-result snapshots
+  (requires auth). See services/saved_chats.py.
 - /research — per-club deadline/meeting/coffee-chat lookup, called only
   when explicitly requested (never automatic from any of the above).
 
@@ -35,6 +37,7 @@ from backend.routes import (
     chat_routes,
     matching_routes,
     research_routes,
+    saved_chats_routes,
     saved_clubs_routes,
 )
 
@@ -55,6 +58,7 @@ app.add_middleware(
 app.include_router(auth_routes.router)
 app.include_router(research_routes.router)
 app.include_router(saved_clubs_routes.router)
+app.include_router(saved_chats_routes.router)
 app.include_router(browse_routes.router)
 app.include_router(chat_routes.router)
 app.include_router(matching_routes.router)

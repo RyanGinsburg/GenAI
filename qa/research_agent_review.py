@@ -88,7 +88,10 @@ def run() -> None:
         lines.append("|---|---|---|---|")
         for field, label in FIELD_LABELS.items():
             value = result.get(field)
-            display = value if value else "_null_"
+            if field == "coffee_chat_link":
+                display = ", ".join(value) if value else "_null_"
+            else:
+                display = value if value else "_null_"
             lines.append(f"| {label} | {display} | ☐ correct ☐ wrong ☐ missed something | |")
         lines.append("")
         lines.append("<details><summary>Raw JSON</summary>\n")

@@ -75,9 +75,8 @@ _(update this line every handoff so it's never ambiguous)_
 > (backend/services/calendar_sync.py + POST /calendar/add-events). Needs
 > manual Google Cloud Console setup that can't be automated — see
 > BUILD_PROMPTS.md's Step 7 prompt. To run the app locally: backend
-> (`uvicorn backend.main:app --reload`, needs `JWT_SECRET_KEY` set in
-> `.env` — see `.env.example` — and `python -m playwright install
-> chromium` once after pip install) and frontend
+> (`uvicorn backend.main:app --reload`, needs `JWT_SECRET_KEY` and
+> `FIRECRAWL_API_KEY` set in `.env` — see `.env.example`) and frontend
 > (`cd frontend && npm install && npm run dev`) both running at the same
 > time.
 

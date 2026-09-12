@@ -9,15 +9,11 @@ fastapi
 uvicorn
 python-multipart  # required by FastAPI for Form(...)/UploadFile in POST /chat
 
-# Scraping (scraper/)
+# Scraping (scraper/), and Firecrawl REST calls in research_agent.py (raw
+# requests.post/get against api.firecrawl.dev — not the firecrawl-py SDK,
+# since its class/method names have changed across versions).
 requests
-beautifulsoup4
-
-# Headless-browser page fetching for research_agent.py — plain requests.get()
-# can't see content a site injects via client-side JS after page load (see
-# research_agent.py's module docstring). After installing this, also run:
-#   .venv/bin/python -m playwright install chromium
-playwright
+beautifulsoup4  # still used by scraper/scrape_campusgroups.py only
 
 # LLM extraction + reasoning
 anthropic
@@ -38,6 +34,12 @@ sentence-transformers
 # hashing uses the stdlib (hashlib.pbkdf2_hmac) — no extra dependency there.
 # SQLite (data/app.db) uses the stdlib sqlite3 module — no dependency either.
 pyjwt
+
+# Verifies Google Sign-In ID tokens server-side (google.oauth2.id_token.
+# verify_oauth2_token) — only needs GOOGLE_CLIENT_ID as the expected
+# audience, not the client secret. Password-reset email uses stdlib smtplib
+# — no dependency needed there.
+google-auth
 
 # Not pinned yet — versions are still settling. Pin with `pip freeze` once the
 # pipeline works end to end.

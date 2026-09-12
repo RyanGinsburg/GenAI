@@ -3,26 +3,25 @@ import ChatAssistant from './ChatAssistant'
 import MatchResults from './MatchResults'
 import RefineBar from './RefineBar'
 import LoadingIndicator from './LoadingIndicator'
-import { postMatchingFromProfile, postMatchingRefine } from '../api'
+import { postMatchingFromProfile, postMatchingRefine, saveChat } from '../api'
+import { summarizeProfile } from '../utils/summarizeProfile'
 
-function summarizeProfile(profile) {
-  const bits = []
-  if (!profile) return 'your interests'
-  if (profile.major) bits.push(profile.major)
-  if (profile.school_or_college) bits.push(profile.school_or_college)
-  if (profile.vibe) bits.push(profile.vibe === 'both' ? 'social + professional' : profile.vibe)
-  if (profile.activity_level) bits.push(`${profile.activity_level} time commitment`)
-  ;(profile.specific_interests_in_mind || []).forEach((p) => bits.push(p))
-  ;(profile.hobbies || []).forEach((p) => bits.push(p))
-  return bits.join(', ') || 'your interests'
-}
-
-export default function ChatSection({ research, selections, onGetInfo, onToggleSelection, savedUrls, onToggleSave }) {
+export default function ChatSection({
+  research,
+  selections,
+  onGetInfo,
+  onToggleSelection,
+  savedUrls,
+  onToggleSave,
+  token,
+  onRequireLogin,
+}) {
   const [profile, setProfile] = useState(null)
   const [groups, setGroups] = useState(null)
   const [matchingLoading, setMatchingLoading] = useState(false)
   const [refining, setRefining] = useState(false)
   const [error, setError] = useState(null)
+  const [saveChatStatus, setSaveChatStatus] = useState(null) // null | 'saving' | 'saved' | 'error'
 
   async function handleProfileReady(builtProfile) {
     setProfile(builtProfile)
@@ -57,6 +56,22 @@ export default function ChatSection({ research, selections, onGetInfo, onToggleS
     setProfile(null)
     setGroups(null)
     setError(null)
+    setSaveChatStatus(null)
+  }
+
+  async function handleSaveChat() {
+    if (!token) {
+      onRequireLogin()
+      return
+    }
+    setSaveChatStatus('saving')
+    try {
+      await saveChat(token, profile, groups)
+      setSaveChatStatus('saved')
+      setTimeout(() => setSaveChatStatus(null), 2500)
+    } catch (err) {
+      setSaveChatStatus('error')
+    }
   }
 
   if (!profile) {
@@ -71,10 +86,18 @@ export default function ChatSection({ research, selections, onGetInfo, onToggleS
     <div>
       <div className="chat-section__results-header">
         <p className="chat-section__profile-summary">Based on: {summarizeProfile(profile)}</p>
-        <button type="button" onClick={startOver}>
-          Start a new search
-        </button>
+        <div className="chat-section__results-actions">
+          {groups && (
+            <button type="button" onClick={handleSaveChat} disabled={saveChatStatus === 'saving'}>
+              {saveChatStatus === 'saved' ? 'Saved!' : saveChatStatus === 'saving' ? 'Saving...' : 'Save chat'}
+            </button>
+          )}
+          <button type="button" onClick={startOver}>
+            Start a new search
+          </button>
+        </div>
       </div>
+      {saveChatStatus === 'error' && <p className="error-banner">Could not save this chat. Try again.</p>}
 
       <RefineBar onSubmit={handleRefine} busy={refining} />
       {refining && <LoadingIndicator label="Updating your results..." />}
@@ -84,6 +107,7 @@ export default function ChatSection({ research, selections, onGetInfo, onToggleS
       {groups && (
         <MatchResults
           groups={groups}
+          profile={profile}
           research={research}
           selections={selections}
           onGetInfo={onGetInfo}

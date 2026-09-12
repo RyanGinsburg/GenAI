@@ -4,10 +4,13 @@ const SECTIONS = [
   { key: 'my-clubs', label: 'My Clubs' },
 ]
 
-export default function NavBar({ activeSection, onSectionChange, user, onLoginClick, onLogout }) {
+export default function NavBar({ activeSection, onSectionChange, user, onLoginClick, onLogout, onTitleClick }) {
   return (
     <header className="nav-bar">
-      <h1 className="nav-bar__title">Cornell Clubs</h1>
+      <button type="button" className="nav-bar__title" onClick={onTitleClick}>
+        <img className="nav-bar__logo" src="/logo.png" alt="" />
+        Cornell Clubs
+      </button>
       <nav className="nav-bar__tabs">
         {SECTIONS.map(({ key, label }) => (
           <button

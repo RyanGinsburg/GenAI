@@ -1,9 +1,10 @@
 """Research a club's website for deadlines, meetings, and coffee chats.
 
 Given a club's website_url:
-1. Fetch the page with a real (headless) browser, and if an obvious nav link
-   looks like it points to events/join/recruit/apply/contact info, fetch
-   that page too (max 2 pages total).
+1. Crawl the site with Firecrawl (api.firecrawl.dev), which renders pages
+   with its own headless infrastructure and returns clean markdown per
+   page — up to FIRECRAWL_CRAWL_LIMIT same-domain pages, not just a
+   hand-picked primary + secondary link.
 2. Ask Claude to extract: application_deadline, next_meeting, info_session,
    coffee_chat_link.
 3. Return a structured result. If nothing was found, set not_found: true
@@ -12,72 +13,103 @@ Given a club's website_url:
 
 Per CLAUDE.md's "never fabricate" constraint: the model is explicitly told
 not to guess or infer anything not actually stated on the page(s) — any
-field it can't find comes back null, not a plausible-looking guess.
+field it can't find comes back null (or an empty list, for
+coffee_chat_link), not a plausible-looking guess.
 
-Why a headless browser instead of a plain HTTP GET: confirmed 2026-09-05 on
-Applied Public Policy Strategies at Cornell (appscornell.org) that a plain
-`requests.get()` completely misses content a site injects into the DOM via
-client-side JS after page load — that club's real application deadline and
-two info-session dates live in a hardcoded array inside its script.js,
-appended to the page by JS on DOMContentLoaded, and simply don't exist
-anywhere in the server-sent HTML. A person visiting the site in a browser
-sees them fine; the old requests-based fetch never could. See
-qa/research_agent_review.md for the full trace. Rendering with Playwright's
-headless Chromium and reading the *rendered* DOM fixes this generally,
-rather than special-casing this one site.
+Why Firecrawl instead of a local headless browser: this file previously
+drove Playwright/Chromium itself, specifically because a plain
+`requests.get()` can't see content a site injects into the DOM via
+client-side JS after page load (confirmed 2026-09-05 on Applied Public
+Policy Strategies at Cornell — its real deadline/info-session dates only
+exist because script.js appends them to the page on DOMContentLoaded).
+Firecrawl's hosted crawler renders JS the same way Playwright did, so that
+problem is still solved, just by different infrastructure — and its
+/crawl endpoint also does the "find more relevant pages on this site" job
+that _find_secondary_url() used to do by hand (a single keyword-matched
+link, max 2 pages total), now covering up to FIRECRAWL_CRAWL_LIMIT pages
+per site via Firecrawl's own link discovery, biased toward the same
+apply/recruit/join/event/contact keywords via includePaths (see
+_build_include_paths) so a site with many unrelated pages (team bios, a
+blog, a privacy policy) doesn't crowd out the one page that actually has
+recruiting info within the page budget.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
-from urllib.parse import urljoin, urlparse
+import time
+from urllib.parse import urlparse
 
 import anthropic
-from bs4 import BeautifulSoup, NavigableString
+import requests
 from dotenv import load_dotenv
-from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
 
 load_dotenv()
 
-USER_AGENT = (
-    "Mozilla/5.0 (compatible; CornellClubAgent/0.1; "
-    "student project, contact via github.com/RyanGinsburg/GenAI)"
-)
-REQUEST_TIMEOUT_SECONDS = 15
-MAX_PAGES = 2
-MAX_PAGE_CHARS = 25000  # keep the prompt a reasonable size on very long pages
-# 12000 was fine when pages were plain server-rendered HTML, but rendering
-# JS-injected content (see the module docstring) makes pages meaningfully
-# longer -- e.g. team bios + FAQ + a recruitment timeline all render into
-# one page's text -- and the old cap silently truncated the actual deadline
-# off the end of Applied Public Policy Strategies' page (confirmed
-# 2026-09-05: its full rendered text is ~13.8k chars). 25000 chars is still
-# cheap for claude-sonnet-5 and leaves real headroom over that.
+FIRECRAWL_API_BASE = "https://api.firecrawl.dev/v2"
+FIRECRAWL_CRAWL_LIMIT = 8  # replaces the old MAX_PAGES=2 primary+secondary cap
+FIRECRAWL_REQUEST_TIMEOUT_SECONDS = 20  # per HTTP call (one POST or one GET poll)
+FIRECRAWL_POLL_INTERVAL_SECONDS = 3
+FIRECRAWL_POLL_TIMEOUT_SECONDS = 120  # wall-clock budget for the whole crawl to finish
+# Raised from an initial 90s: a low-tier Firecrawl plan's 429 responses have
+# been observed asking for a 20-60s backoff (see FIRECRAWL_DEFAULT_RETRY_SECONDS
+# below), and this budget needs room for one such backoff cycle mid-poll on
+# top of the crawl's own real run time.
+
+FIRECRAWL_MAX_START_RETRIES = 2  # bounded retries for the initial POST /crawl
+# request specifically, on 429 only. POST /research loops over multiple
+# website_urls back-to-back with no delay between them, so a rate-limited
+# Firecrawl plan (confirmed live: 3 requests/min, no Retry-After header, only
+# a "retry after Ns" string in the JSON error body) would otherwise fail most
+# of a multi-club batch outright instead of just running slower.
+FIRECRAWL_DEFAULT_RETRY_SECONDS = 20  # fallback backoff when a 429 body's
+# "retry after Ns" hint can't be parsed
+_RETRY_AFTER_RE = re.compile(r"retry after (\d+)s", re.IGNORECASE)
+
+FIRECRAWL_INCLUDE_PATH_KEYWORDS = ("apply", "recruit", "join", "event", "contact")
+# Same keyword list the old _find_secondary_url() prioritized (apply/recruit/
+# join over events/contact) - apply/recruit/join/event/contact paths are
+# where clubs actually put deadlines and application info. Without this,
+# Firecrawl's own link discovery has no notion of which pages matter and can
+# fill the whole FIRECRAWL_CRAWL_LIMIT budget on low-value pages instead -
+# confirmed live on Cornell Business Analytics Club, whose crawl picked up
+# several /team/<uuid> bio sub-pages and never reached its real /recruitment
+# page, which the site's own nav links directly from the homepage.
+
+MAX_COMBINED_CHARS = 60000  # replaces the old per-page MAX_PAGE_CHARS=25000;
+# applied to the final *combined* multi-page text now, since page count is
+# variable (1-8, via FIRECRAWL_CRAWL_LIMIT) rather than a fixed 1-or-2. The
+# most verbose real page seen so far (Applied Public Policy Strategies,
+# ~13.8k chars fully rendered) plus headroom for an 8-page crawl averaging
+# ~7-8k chars/page worst case (~56-64k total) both fit comfortably under
+# this, while staying well inside claude-sonnet-5's 200k-token window and
+# keeping the typical-case call cheap. Bump this if real testing finds a
+# club site actually getting truncated at this boundary.
 
 MODEL = "claude-sonnet-5"
 
-# Ordered by priority, most likely to hold real recruiting/deadline info first.
-# "apply"/"recruit"/"join" pages are where clubs actually put deadlines and
-# application forms; "events"/"contact" pages are far more likely to be
-# generic. _find_secondary_url picks the highest-priority match across ALL
-# links on the page, not just the first one encountered in the HTML - see
-# qa/research_agent_review.md for real cases (Cornell Real Estate Club,
-# Cornell Consulting Club, Cornell Algo Trading Club, Quant Fund at Cornell)
-# where a generic "events"/"contact" link that happened to appear earlier in
-# the page was followed instead of the club's actual recruiting page.
-SECONDARY_LINK_KEYWORDS = ("apply", "recruit", "join", "events", "contact")
 RESULT_FIELDS = ("application_deadline", "next_meeting", "info_session", "coffee_chat_link")
+# coffee_chat_link is list-valued (see SYSTEM_PROMPT); every other field is a
+# scalar string-or-null. _FIELD_DEFAULTS/_empty_result() and research_club()'s
+# not_found check both need to treat that field's "nothing found" value as
+# [] rather than None.
+_FIELD_DEFAULTS = {f: ([] if f == "coffee_chat_link" else None) for f in RESULT_FIELDS}
 
 SYSTEM_PROMPT = """You extract recruiting/event details from a student club's website text.
 
-You will be given the text of 1-2 pages from the club's own website. Return ONLY a
-single JSON object (no markdown fences, no commentary) with exactly these keys:
+You will be given the markdown text of several pages crawled from the club's own
+website. Return ONLY a single JSON object (no markdown fences, no commentary) with
+exactly these keys:
 - "application_deadline": string or null - a stated deadline to apply/join
 - "next_meeting": string or null - a stated date/time for the next general meeting
 - "info_session": string or null - a stated date/time for an info session
-- "coffee_chat_link": string or null - a stated URL/contact for booking a coffee chat
+- "coffee_chat_link": array of strings - URL(s)/contact(s) for booking a coffee chat.
+  Use an empty array [] if none are stated. Some clubs have multiple sub-teams or
+  committees, each with its own coffee chat sign-up link (e.g. a separate link for
+  "Design" and one for "Engineering") - if that's the case, include ALL of them, not
+  just one.
 
 Rules:
 - Only use information explicitly stated in the given page text. Do NOT guess, infer,
@@ -91,11 +123,14 @@ Rules:
   a concrete detail is stated anywhere on the page, extract it - a vague placeholder
   elsewhere on the same page does NOT override or suppress a specific date, time, or
   link that is actually present. Only use null when no concrete detail is given at all.
-- Link destinations appear in parentheses right after their link text, e.g.
-  'Sign Up Now (https://forms.gle/abc123)' - use that URL for coffee_chat_link when
-  the surrounding link text/context indicates it's for booking a coffee chat.
-- If a field isn't present in the text, use null for it. It is normal and expected
-  for most or all fields to be null - most club websites don't list this information.
+- Links appear in standard markdown syntax, e.g. '[Sign Up Now](https://forms.gle/abc123)'
+  - collect the URL into coffee_chat_link whenever the surrounding link text/context
+  indicates it's for booking a coffee chat. A page can legitimately have more than one
+  such link (e.g. one per sub-team) - collect every one you find, not just the first.
+- If application_deadline, next_meeting, or info_session isn't present in the text, use
+  null for that field. If no coffee chat link is present anywhere, use an empty array
+  []. It is normal and expected for most or all fields to come back empty - most club
+  websites don't list this information.
 - Output must be valid JSON and nothing else.
 """
 
@@ -109,139 +144,166 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
-_playwright = None
-_browser = None
-
-
-def _get_browser():
-    """Lazily launch one headless Chromium instance, reused across every
-    _fetch() call in this process (launching a fresh browser per call would
-    add multiple seconds to every research_club() call)."""
-    global _playwright, _browser
-    if _browser is None:
-        _playwright = sync_playwright().start()
-        _browser = _playwright.chromium.launch(headless=True)
-    return _browser
-
-
 def _empty_result(website_url: str, error: str | None = None) -> dict:
-    result = {"website_url": website_url, **{f: None for f in RESULT_FIELDS}, "not_found": True}
+    result = {"website_url": website_url, **_FIELD_DEFAULTS, "not_found": True}
     if error:
         result["error"] = error
     return result
 
 
-def _fetch(url: str) -> BeautifulSoup | None:
-    """Fetch a page with a headless browser, letting its JS actually run,
-    then parse the rendered DOM. Returns None on any failure (unreachable
-    site, navigation timeout, etc.) — never raises.
+def _retry_after_seconds(response_text: str) -> int:
+    """Extract a "retry after Ns" hint from a Firecrawl 429 error body (no
+    Retry-After header is sent), or fall back to a default backoff."""
+    match = _RETRY_AFTER_RE.search(response_text)
+    return int(match.group(1)) if match else FIRECRAWL_DEFAULT_RETRY_SECONDS
 
-    "domcontentloaded" (not the slower "networkidle") is enough for the
-    client-side-injected-content case this exists for: DOMContentLoaded is
-    exactly the event sites like appscornell.org hook to inject their
-    content, and waiting for full network idle would also make this hang on
-    any page with long-polling analytics/chat widgets.
-    """
-    try:
-        browser = _get_browser()
-        page = browser.new_page(user_agent=USER_AGENT)
+
+def _build_include_paths(url: str) -> list[str]:
+    """includePaths patterns for one club's crawl. Firecrawl also checks the
+    seed URL itself against these patterns (an all-keyword list with no
+    exact-seed-path entry can return 0 pages), so the seed's own path is
+    always included exactly, in addition to the keyword bias."""
+    seed_path = urlparse(url).path or "/"
+    return [f"^{re.escape(seed_path)}$"] + [
+        f"(?i){kw}" for kw in FIRECRAWL_INCLUDE_PATH_KEYWORDS
+    ]
+
+
+def _firecrawl_start(url: str) -> tuple[str | None, str | None]:
+    """POST /v2/crawl for url. Returns (status_url, None) on success, or
+    (None, error_message) on any failure (missing key, network error,
+    non-2xx response, malformed body) — never raises."""
+    api_key = os.environ.get("FIRECRAWL_API_KEY")
+    if not api_key:
+        return None, "Missing FIRECRAWL_API_KEY."
+
+    body = {
+        "url": url,
+        "limit": FIRECRAWL_CRAWL_LIMIT,
+        "crawlEntireDomain": True,
+        "allowSubdomains": False,
+        "allowExternalLinks": False,
+        "includePaths": _build_include_paths(url),
+        "scrapeOptions": {"formats": ["markdown"], "onlyMainContent": False},
+    }
+    for attempt in range(FIRECRAWL_MAX_START_RETRIES + 1):
         try:
-            response = page.goto(url, timeout=REQUEST_TIMEOUT_SECONDS * 1000, wait_until="domcontentloaded")
-            if response is None or response.status >= 400:
-                return None
-            page.wait_for_timeout(500)  # let synchronous post-DOMContentLoaded JS finish
-            html = page.content()
-        finally:
-            page.close()
-    except PlaywrightError:
-        return None
-    return BeautifulSoup(html, "html.parser")
+            resp = requests.post(
+                f"{FIRECRAWL_API_BASE}/crawl",
+                json=body,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=FIRECRAWL_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            return None, f"Network error starting Firecrawl crawl: {e}"
 
-
-def _page_text(soup: BeautifulSoup, base_url: str) -> str:
-    """Visible text of a page, scripts/styles stripped, whitespace collapsed.
-
-    Link destinations are preserved in parentheses right after their anchor
-    text (e.g. "Sign Up Now (https://forms.gle/abc123)"). Plain
-    soup.get_text() silently drops every <a href>, which meant a coffee chat
-    link sitting right on the page was invisible to the model even though
-    the button text ("Sign Up Now") survived - see qa/research_agent_review.md.
-    """
-    for tag in soup(["script", "style", "noscript"]):
-        tag.extract()
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if not href or href.startswith(("#", "mailto:", "tel:", "javascript:")):
+        if resp.status_code == 429 and attempt < FIRECRAWL_MAX_START_RETRIES:
+            time.sleep(_retry_after_seconds(resp.text))
             continue
-        absolute = urljoin(base_url, href)
-        a.append(NavigableString(f" ({absolute})"))
-    text = soup.get_text(separator=" ", strip=True)
-    return re.sub(r"\s+", " ", text)[:MAX_PAGE_CHARS]
+        break
+
+    if not resp.ok:
+        return None, f"Firecrawl crawl request failed ({resp.status_code}): {resp.text[:300]}"
+
+    try:
+        data = resp.json()
+    except ValueError:
+        return None, "Firecrawl crawl request did not return valid JSON."
+
+    if not data.get("success") or not data.get("url"):
+        return None, "Firecrawl crawl request did not return a job status URL."
+
+    return data["url"], None
 
 
-def _find_secondary_url(soup: BeautifulSoup, base_url: str, already_fetched: str) -> str | None:
-    """Look for a same-domain nav link whose text or href suggests apply/
-    recruit/join/events/contact info, and return the absolute URL of the
-    highest-priority match (by position in SECONDARY_LINK_KEYWORDS) found
-    anywhere on the page - not just the first matching link encountered in
-    the HTML. A page's nav often has both a generic link (e.g. "Contact",
-    "Events") and the actual recruiting page (e.g. "Apply"); taking whichever
-    came first in the markup meant the real page was frequently skipped in
-    favor of a generic one that happened to appear earlier - see Cornell
-    Real Estate Club, Cornell Consulting Club, Cornell Algo Trading Club, and
-    Quant Fund at Cornell in qa/research_agent_review.md, all of which have
-    a real recruiting timeline on an /apply-style page that was missed this
-    way.
+def _firecrawl_poll(status_url: str) -> tuple[list[dict] | None, str | None]:
+    """Poll status_url until Firecrawl reports completed/failed, or
+    FIRECRAWL_POLL_TIMEOUT_SECONDS elapses. Returns (pages, None) on
+    success — pages is the raw list of Firecrawl page objects (each with
+    "markdown"/"metadata") — or (None, error_message) on any failure.
+    Never raises."""
+    api_key = os.environ.get("FIRECRAWL_API_KEY")
+    if not api_key:
+        return None, "Missing FIRECRAWL_API_KEY."
 
-    Restricted to the same domain as base_url so a stray keyword match (e.g.
-    a "Contact" link that happens to point at someone's LinkedIn profile)
-    can't send the second fetch off-site - see the Blockchain at Cornell
-    case in qa/research_agent_review.md.
-    """
-    base_domain = urlparse(base_url).netloc
-    best: tuple[int, str] | None = None
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if href.startswith(("#", "mailto:", "tel:", "javascript:")):
+    deadline = time.monotonic() + FIRECRAWL_POLL_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            resp = requests.get(
+                status_url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=FIRECRAWL_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            return None, f"Network error polling Firecrawl crawl: {e}"
+
+        if resp.status_code == 429:
+            # Wait out the rate limit within the existing deadline rather
+            # than failing outright — see FIRECRAWL_MAX_START_RETRIES.
+            wait = min(_retry_after_seconds(resp.text), max(0, deadline - time.monotonic()))
+            time.sleep(wait)
             continue
-        haystack = f"{a.get_text(strip=True)} {href}".lower()
-        matches = [i for i, kw in enumerate(SECONDARY_LINK_KEYWORDS) if kw in haystack]
-        if not matches:
-            continue
-        absolute = urljoin(base_url, href)
-        if urlparse(absolute).netloc != base_domain or absolute == already_fetched:
-            continue
-        priority = min(matches)
-        if best is None or priority < best[0]:
-            best = (priority, absolute)
-    return best[1] if best else None
+
+        if not resp.ok:
+            return None, f"Firecrawl status check failed ({resp.status_code}): {resp.text[:300]}"
+
+        try:
+            data = resp.json()
+        except ValueError:
+            return None, "Firecrawl status check did not return valid JSON."
+
+        status = data.get("status")
+        if status == "completed":
+            return data.get("data") or [], None
+        if status == "failed":
+            return None, f"Firecrawl crawl failed: {data.get('error', 'no detail given')}"
+
+        time.sleep(FIRECRAWL_POLL_INTERVAL_SECONDS)
+
+    return None, f"Firecrawl crawl timed out after {FIRECRAWL_POLL_TIMEOUT_SECONDS}s."
+
+
+def _crawl_site(url: str) -> tuple[list[dict], str | None]:
+    """Start a Firecrawl crawl of url and wait for it to finish. Returns
+    (pages, None) on success or ([], error_message) on any failure."""
+    status_url, error = _firecrawl_start(url)
+    if error:
+        return [], error
+    pages, error = _firecrawl_poll(status_url)
+    if error:
+        return [], error
+    return pages, None
+
+
+def _page_url(page: dict, fallback: str) -> str:
+    """Best-effort source URL for one Firecrawl page object."""
+    metadata = page.get("metadata") or {}
+    return metadata.get("url") or metadata.get("sourceURL") or fallback
+
+
+def _page_markdown(page: dict) -> str:
+    """This page's markdown content, or '' if Firecrawl returned none."""
+    return (page.get("markdown") or "").strip()
 
 
 def research_club(website_url: str) -> dict:
     """Research one club's website. Returns a dict with website_url,
-    application_deadline, next_meeting, info_session, coffee_chat_link, and
-    not_found (true iff every field above is null). Never raises - any
-    failure (unreachable site, bad API response) comes back as not_found
-    with an "error" key describing what went wrong.
+    application_deadline, next_meeting, info_session, coffee_chat_link
+    (a list), and not_found (true iff every field above is empty). Never
+    raises - any failure (unreachable site, crawl timeout, bad API
+    response) comes back as not_found with an "error" key describing what
+    went wrong.
     """
-    soup = _fetch(website_url)
-    if soup is None:
-        return _empty_result(website_url, error=f"Could not fetch {website_url}")
+    pages, error = _crawl_site(website_url)
+    if error or not pages:
+        return _empty_result(website_url, error=error or f"No pages returned for {website_url}")
 
-    pages_checked = [website_url]
-    texts = [_page_text(soup, website_url)]
-
-    if MAX_PAGES > 1:
-        secondary_url = _find_secondary_url(soup, website_url, website_url)
-        if secondary_url:
-            secondary_soup = _fetch(secondary_url)
-            if secondary_soup is not None:
-                pages_checked.append(secondary_url)
-                texts.append(_page_text(secondary_soup, secondary_url))
+    pages_checked = [_page_url(p, website_url) for p in pages]
+    texts = [_page_markdown(p) for p in pages]
 
     combined_text = "\n\n".join(
         f"--- Page: {url} ---\n{text}" for url, text in zip(pages_checked, texts)
-    )
+    )[:MAX_COMBINED_CHARS]
 
     try:
         response = _get_client().messages.create(
@@ -277,7 +339,17 @@ def research_club(website_url: str) -> dict:
         return _empty_result(website_url, error=f"Model did not return valid JSON: {response_text[:300]!r}")
 
     fields = {f: extracted.get(f) for f in RESULT_FIELDS}
-    not_found = all(v is None for v in fields.values())
+    if fields["coffee_chat_link"] is None:
+        fields["coffee_chat_link"] = []
+    elif isinstance(fields["coffee_chat_link"], str):
+        # Defensive: tolerate the model returning a bare string despite the
+        # schema instruction, rather than dropping a real link.
+        fields["coffee_chat_link"] = [fields["coffee_chat_link"]]
+
+    not_found = all(
+        fields[f] == [] if f == "coffee_chat_link" else fields[f] is None
+        for f in RESULT_FIELDS
+    )
 
     return {
         "website_url": website_url,

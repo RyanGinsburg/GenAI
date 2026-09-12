@@ -41,6 +41,33 @@ export async function getCurrentUser(token) {
   return asJson(res, 'Fetching account')
 }
 
+export async function googleSignIn(credential) {
+  const res = await fetch(`${API_BASE}/auth/google`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential }),
+  })
+  return asJson(res, 'Google sign-in')
+}
+
+export async function requestPasswordReset(email) {
+  const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+  return asJson(res, 'Requesting password reset')
+}
+
+export async function resetPassword(token, newPassword) {
+  const res = await fetch(`${API_BASE}/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  })
+  return asJson(res, 'Resetting password')
+}
+
 // --- Chat / profile-building ---
 
 export async function postChatMessage(history, profile, resumeProfile) {
@@ -116,10 +143,46 @@ export async function unsaveClub(token, websiteUrl) {
   return asJson(res, 'Removing club')
 }
 
+// --- Saved chats ("My Clubs" -> "Saved Chats") ---
+
+export async function getSavedChats(token) {
+  const res = await fetch(`${API_BASE}/chats/saved`, { headers: authHeaders(token) })
+  return asJson(res, 'Loading saved chats')
+}
+
+export async function getSavedChatDetail(token, chatId) {
+  const res = await fetch(`${API_BASE}/chats/saved/${chatId}`, { headers: authHeaders(token) })
+  return asJson(res, 'Loading saved chat')
+}
+
+export async function saveChat(token, profile, groups, label) {
+  const res = await fetch(`${API_BASE}/chats/saved`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ profile, groups, label }),
+  })
+  return asJson(res, 'Saving chat')
+}
+
+export async function removeSavedChat(token, chatId) {
+  const res = await fetch(`${API_BASE}/chats/saved/remove`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ chat_id: chatId }),
+  })
+  return asJson(res, 'Removing saved chat')
+}
+
 // --- Browse ---
 
 export async function browseClubs({ search = '', category = 'All', page = 1 } = {}) {
   const params = new URLSearchParams({ search, category, page: String(page) })
   const res = await fetch(`${API_BASE}/clubs?${params}`)
   return asJson(res, 'Browsing clubs')
+}
+
+export async function aiSearchClubs({ q, category = 'All', topK = 24 } = {}) {
+  const params = new URLSearchParams({ q, category, top_k: String(topK) })
+  const res = await fetch(`${API_BASE}/clubs/ai-search?${params}`)
+  return asJson(res, 'AI search')
 }

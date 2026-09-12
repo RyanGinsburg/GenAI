@@ -1,11 +1,11 @@
 // One club: its basic info, an optional match score, a Save button, a
 // "Get info" button that triggers POST /research on demand (never
 // automatic), and, once researched, checkboxes for whichever dated fields
-// were actually found (the calendar-eligible ones) plus a plain link for
-// coffee_chat_link (a booking link, not something with its own start/end
-// time). Shared across the Chat results, Browse Clubs, and My Clubs
-// sections - showScore hides the match-score badge where it isn't
-// meaningful (Browse, My Clubs).
+// were actually found (the calendar-eligible ones) plus a plain link per
+// coffee_chat_link entry (a list - some clubs have one per sub-team - each
+// a booking link, not something with its own start/end time). Shared
+// across the Chat results, Browse Clubs, and My Clubs sections - showScore
+// hides the match-score badge where it isn't meaningful (Browse, My Clubs).
 
 const EVENT_FIELDS = [
   { key: 'application_deadline', label: 'Application deadline' },
@@ -31,6 +31,11 @@ function ResearchPanel({ state, selections, onToggleSelection }) {
 
   const { result } = state
   const foundEventFields = EVENT_FIELDS.filter((f) => result[f.key])
+  const coffeeChatLinks = Array.isArray(result.coffee_chat_link)
+    ? result.coffee_chat_link
+    : result.coffee_chat_link
+      ? [result.coffee_chat_link] // tolerate a stale cached pre-migration string
+      : []
 
   if (result.not_found) {
     return (
@@ -56,17 +61,18 @@ function ResearchPanel({ state, selections, onToggleSelection }) {
           </span>
         </label>
       ))}
-      {result.coffee_chat_link && (
+      {coffeeChatLinks.map((link, i) => (
         <a
+          key={link}
           className="coffee-chat-link"
-          href={result.coffee_chat_link}
+          href={link}
           target="_blank"
           rel="noreferrer"
         >
-          ☕ Coffee chat sign-up
+          ☕ Coffee chat sign-up{coffeeChatLinks.length > 1 ? ` #${i + 1}` : ''}
         </a>
-      )}
-      {foundEventFields.length === 0 && !result.coffee_chat_link && (
+      ))}
+      {foundEventFields.length === 0 && coffeeChatLinks.length === 0 && (
         <p className="research-status">No concrete details found.</p>
       )}
     </div>
@@ -89,9 +95,9 @@ export default function ClubCard({
     <article className="club-card">
       <div className="club-card__header">
         <h3>{club.name}</h3>
-        {showScore && typeof club.score === 'number' && (
+        {showScore && (typeof club.match_percent === 'number' || typeof club.score === 'number') && (
           <span className="club-card__score" title="Match score">
-            {Math.round(club.score * 100)}%
+            {typeof club.match_percent === 'number' ? club.match_percent : Math.round(club.score * 100)}%
           </span>
         )}
       </div>
@@ -108,7 +114,7 @@ export default function ClubCard({
               className={saved ? 'club-card__save club-card__save--active' : 'club-card__save'}
               onClick={onToggleSave}
             >
-              {saved ? 'Saved' : 'Save'}
+              {saved ? 'Unsave' : 'Save'}
             </button>
           )}
           {!hasResearched && (

@@ -26,6 +26,19 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class GoogleAuthRequest(BaseModel):
+    credential: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 @router.post("/register")
 def register(req: RegisterRequest):
     try:
@@ -40,6 +53,33 @@ def login(req: LoginRequest):
         return accounts.login_user(req.email, req.password)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+
+@router.post("/google")
+def google_sign_in(req: GoogleAuthRequest):
+    try:
+        return accounts.google_sign_in(req.credential)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+@router.post("/forgot-password")
+def forgot_password(req: ForgotPasswordRequest):
+    try:
+        accounts.request_password_reset(req.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Always the same response, whether or not the email matched an
+    # account - see accounts.request_password_reset's non-enumeration note.
+    return {"message": "If an account exists for that email, we've sent a password reset link."}
+
+
+@router.post("/reset-password")
+def reset_password(req: ResetPasswordRequest):
+    try:
+        return accounts.reset_password(req.token, req.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/me")

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -72,6 +73,48 @@ def _texts_hash(texts: list[str]) -> str:
         h.update(b"\x00")
         h.update(t.encode("utf-8"))
     return h.hexdigest()
+
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+KEYWORD_BONUS = 0.35
+KEYWORD_BONUS_CAP = 1.3
+
+
+def _normalize_words(text: str) -> set[str]:
+    """Lowercased, punctuation-stripped token set with a light manual
+    ing/s-stripping (no stemming library) so "skiing"/"ski" or
+    "clubs"/"club" share a root. Deliberately simple/deterministic - the
+    length guards avoid mangling short words (e.g. "gaming" -> "gam")."""
+    words: set[str] = set()
+    for w in _WORD_RE.findall((text or "").lower()):
+        words.add(w)
+        if w.endswith("ing") and len(w) > 5:
+            words.add(w[:-3])
+        elif w.endswith("s") and len(w) > 3:
+            words.add(w[:-1])
+    return words
+
+
+def _keyword_bonus(interest: str, club_words: set[str]) -> float:
+    """A direct lexical hit (e.g. hobby "skiing" against a club named "Ski
+    and Snowboard Club") should count for more than pure embedding
+    similarity gives it credit for - see match_clubs_multi_query()."""
+    return KEYWORD_BONUS if _normalize_words(interest) & club_words else 0.0
+
+
+def _score_to_match_percent(score: float) -> int:
+    """Rescales the internal combined score (raw cosine ~0.3-0.6 for a
+    genuinely strong match per this module's own history, up to
+    KEYWORD_BONUS_CAP with a keyword-bonus hit) onto an intuitive 0-100
+    display percentage. Purely cosmetic - ranking/quota logic always uses
+    the raw combined score, never this rescaled value. Piecewise-linear
+    between a noise floor and a "clearly great" ceiling; floor/ceiling are
+    a starting point tuned against known-good query/club pairs (ski,
+    spikeball), not derived from any ground truth beyond that."""
+    floor, ceiling = 0.15, 0.65
+    pct = (max(min(score, ceiling), floor) - floor) / (ceiling - floor)
+    return int(round(10 + pct * 87))  # floor -> 10%, ceiling -> 97%
 
 
 def _embed_texts(texts: list[str]) -> np.ndarray:
@@ -131,7 +174,9 @@ def match_clubs(query: str, top_k: int = 10) -> list[dict]:
     results = []
     for i in top_indices:
         club = dict(clubs[i])
-        club["score"] = float(scores[i])
+        score = float(scores[i])
+        club["score"] = score
+        club["match_percent"] = _score_to_match_percent(score)
         results.append(club)
     return results
 
@@ -156,6 +201,17 @@ def match_clubs_multi_query(
 
     Each result carries "matched_interest": the interest phrase that
     produced its best score (useful for showing "why this was suggested").
+
+    Ranking also folds in a keyword-overlap bonus (see _keyword_bonus()):
+    a direct lexical hit between an interest phrase and a club's own
+    name/description/category (e.g. hobby "spikeball" against a club
+    whose description says "Spikeball") is rewarded on top of embedding
+    similarity, not just cosmetically at display time - this is what
+    makes an explicit, direct hobby match actually outrank a merely
+    topically-adjacent one, addressing "explicit stated interests aren't
+    weighted heavily enough" (short 1-2 word interest phrases vs. long
+    multi-sentence club descriptions structurally cap cosine similarity
+    around 0.3-0.6 even for a genuinely great match).
     """
     clubs = load_clubs()
     if not interests:
@@ -165,6 +221,7 @@ def match_clubs_multi_query(
     interest_embeddings = _embed_texts(interests)  # (n_interests, dim), already normalized
 
     scores_by_interest = embeddings @ interest_embeddings.T  # (n_clubs, n_interests)
+    club_words = [_normalize_words(_club_text(c)) for c in clubs]
 
     best_score: dict[int, float] = {}
     best_interest: dict[int, str] = {}
@@ -173,9 +230,11 @@ def match_clubs_multi_query(
         interest_scores = scores_by_interest[:, interest_idx]
         top_indices = np.argsort(-interest_scores)[:top_k_per_interest]
         for club_idx in top_indices:
-            score = float(interest_scores[club_idx])
-            if score > best_score.get(club_idx, -1.0):
-                best_score[club_idx] = score
+            club_idx = int(club_idx)
+            cosine = float(interest_scores[club_idx])
+            combined = min(cosine + _keyword_bonus(interest, club_words[club_idx]), KEYWORD_BONUS_CAP)
+            if combined > best_score.get(club_idx, -1.0):
+                best_score[club_idx] = combined
                 best_interest[club_idx] = interest
 
     ranked_indices = sorted(best_score, key=lambda i: -best_score[i])[:top_k_total]
@@ -184,6 +243,7 @@ def match_clubs_multi_query(
     for i in ranked_indices:
         club = dict(clubs[i])
         club["score"] = best_score[i]
+        club["match_percent"] = _score_to_match_percent(best_score[i])
         club["matched_interest"] = best_interest[i]
         results.append(club)
     return results
@@ -363,3 +423,18 @@ if __name__ == "__main__":
     assert blended_hits == 0, "expected the old bug to still reproduce on this query"
     assert multi_hits > 0, "match_clubs_multi_query should recover Project Team clubs"
     print("PASS")
+
+    # Keyword-bonus / match_percent regression check: a direct hobby match
+    # should score with high confidence, not read as mediocre.
+    print("\n--- Keyword-bonus / match_percent regression check ---")
+    ski_matches = match_clubs_multi_query(["skiing"], top_k_total=10)
+    ski_hit = next((c for c in ski_matches if "ski" in c["name"].lower()), None)
+    assert ski_hit is not None, "expected a ski club in top 10 for hobby 'skiing'"
+    assert ski_hit["match_percent"] >= 80, f"expected >=80% for {ski_hit['name']!r}, got {ski_hit['match_percent']}"
+    print(f"PASS: {ski_hit['name']!r} -> {ski_hit['match_percent']}%")
+
+    spikeball_matches = match_clubs_multi_query(["spikeball"], top_k_total=10)
+    roundnet_hit = next((c for c in spikeball_matches if c["name"] == "Cornell Roundnet"), None)
+    assert roundnet_hit is not None, "expected Cornell Roundnet in top 10 for hobby 'spikeball'"
+    assert roundnet_hit["match_percent"] >= 80, f"expected >=80% for Cornell Roundnet, got {roundnet_hit['match_percent']}"
+    print(f"PASS: Cornell Roundnet -> {roundnet_hit['match_percent']}%")

@@ -57,12 +57,17 @@ def merge_profile(old: dict | None, delta: dict | None) -> dict:
 
 
 def is_ready_for_matching(profile: dict) -> bool:
-    """Deterministic, explicit low bar: enough to search as soon as we
-    know the general vibe AND at least one concrete topic (a major, a
-    named interest, or a hobby) - never require every field. This backs
-    up (and can force past) the model's own ready_for_matching judgment so
-    "two exchanges should be the normal case" is actually enforced, not
-    just prompt-hoped-for."""
+    """Deterministic bar: enough to search once we know the general vibe,
+    at least one concrete topic (a major, a named interest, or a hobby),
+    and a decent overall spread of fields (filled >= 4, not just 3) - the
+    interview should gather a richer profile before stopping rather than
+    settling for the bare minimum. This backs up (and can force past) the
+    model's own ready_for_matching judgment so "2-3 exchanges, more if
+    answers are vague" is actually enforced, not just prompt-hoped-for.
+
+    A social-leaning profile (vibe "social" or "both") additionally needs
+    a named interest or hobby specifically - a major alone says nothing
+    about what social/fun clubs someone would enjoy."""
     profile = profile or {}
     has_vibe = bool(profile.get("vibe"))
     has_topic = bool(
@@ -71,4 +76,8 @@ def is_ready_for_matching(profile: dict) -> bool:
         or profile.get("hobbies")
     )
     filled = sum(1 for f in PROFILE_FIELDS if profile.get(f))
-    return has_vibe and has_topic and filled >= 3
+    if not (has_vibe and has_topic and filled >= 4):
+        return False
+    if profile.get("vibe") in ("social", "both"):
+        return bool(profile.get("specific_interests_in_mind") or profile.get("hobbies"))
+    return True
